@@ -1,0 +1,491 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+    /* --- Dashboard Specific Styles --- */
+    body {
+      margin: 0;
+      padding: 20px;
+    }
+
+    .dashboard-welcome {
+        margin-bottom: 30px;
+    }
+
+    .dashboard-welcome h2 {
+        font-size: 2.2rem;
+        color: var(--text-light);
+        margin-bottom: 5px;
+        font-weight: 600;
+    }
+
+    .dashboard-welcome p {
+        color: var(--text-muted);
+        font-size: 1.1rem;
+    }
+
+    .grid-container {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr); 
+      gap: 24px; 
+      width: 100%; 
+      margin-bottom: 24px;
+    }
+
+    .panel {
+      background-color: var(--blue-dark);
+      border: 1px solid var(--blue-medium);
+      border-top: 4px solid var(--accent-cyan);
+      border-radius: 12px;
+      padding: 24px 20px;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .panel:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 12px 28px rgba(0, 210, 255, 0.15);
+    }
+
+    .panel h4 {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      margin-bottom: 12px;
+      font-weight: 600;
+    }
+
+    .panel p {
+      font-size: 2.8rem;
+      font-weight: 800;
+      color: var(--text-light);
+      margin: 0;
+      line-height: 1.1;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+    }
+
+    /* --- Status Badges --- */
+    .badge {
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.8rem;
+        font-weight: bold;
+        text-transform: uppercase;
+        display: inline-block;
+        text-align: center;
+        min-width: 40px;
+    }
+    .badge-approved {
+        background-color: rgba(74, 222, 128, 0.15);
+        color: #4ade80;
+        border: 1px solid rgba(74, 222, 128, 0.4);
+    }
+    .badge-flagged {
+        background-color: rgba(248, 113, 113, 0.15);
+        color: #f87171;
+        border: 1px solid rgba(248, 113, 113, 0.4);
+    }
+
+    /* --- Table Specific Styles --- */
+    .details-row { 
+        display: none; 
+        background-color: var(--blue-dark); 
+    }
+    .details-table-container {
+        padding: 15px;
+        border-left: 3px solid var(--accent-cyan);
+        margin-left: 20px;
+    }
+    .details-table { 
+        width: 100%; 
+        margin: 0;
+        background-color: var(--bg-deep);
+    }
+    .details-table th {
+        background-color: #0d1a2f;
+        font-size: 0.8rem;
+    }
+    .view-btn { 
+        cursor: pointer; 
+        padding: 8px 16px; 
+        background: var(--blue-medium); 
+        color: white; 
+        border: 1px solid var(--blue-light); 
+        border-radius: 4px;
+        font-size: 0.9rem;
+        margin: 0;
+        width: 100%;
+        transition: all 0.2s;
+    }
+    .view-btn:hover {
+        background-color: var(--blue-light);
+        border-color: var(--text-light);
+    }
+</style>
+
+<div class="dashboard-welcome">
+    <h2>Welcome back, <span style="color: var(--accent-cyan);">{{ global_username }}</span>!</h2>
+    <p>Here is the latest overview of your pipeline processing activity.</p>
+</div>
+
+<div class="grid-container">
+    <div class="panel">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h4>Global Approval Rate</h4>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+      </div>
+      <p id="stat-approval-rate">Loading...</p>
+    </div>
+    
+    <div class="panel">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h4>Total Images Processed</h4>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+      </div>
+      <p id="stat-total-processed">Loading...</p>
+    </div>
+    
+    <div class="panel">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h4>Active Models</h4>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
+      </div>
+      <p id="stat-active-models">Loading...</p>
+    </div>
+</div>
+
+<div class="panel" style="margin-bottom: 40px; padding: 20px;">
+    <h4 style="margin-bottom: 15px;">Batch Processing Volume (Approved vs. Flagged)</h4>
+    <div style="position: relative; height: 300px; width: 100%;">
+        <canvas id="batchVolumeChart"></canvas>
+    </div>
+</div>
+
+<div class="input-section" style="margin-bottom: 20px;">
+    <h3 style="color: var(--text-light); border-bottom: 2px solid var(--blue-medium); padding-bottom: 10px;">Recent Pipeline Executions</h3>
+</div>
+
+<div class="results-table-container">
+    <table id="historyTable">
+        <thead>
+            <tr>
+                <th>Run Timestamp</th>
+                <th>Total Processed</th>
+                <th>Approved</th>
+                <th>Flagged</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="historyBody">
+            <tr><td colspan="5" style="text-align: center; padding: 20px;">Loading history...</td></tr>
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script>
+    window.batch_data = [];
+    window.batch_pages = {}; 
+    const ROWS_PER_PAGE = 5; 
+    let volumeChartInstance = null; // Global reference for the chart
+
+    document.addEventListener('DOMContentLoaded', () => {
+        fetchHistory();
+    });
+
+    function fetchHistory() {
+        fetch('/api/history')
+            .then(response => response.json())
+            .then(data => {
+                const tbody = document.getElementById('historyBody');
+                tbody.innerHTML = ''; 
+
+                if (data.status == 'success') {
+                    if (data.global_stats) {
+                        const stats = data.global_stats;
+                        
+                        const approvalRateElement = document.getElementById('stat-approval-rate');
+                        const totalProcessedElement = document.getElementById('stat-total-processed');
+                        const activeModelsElement = document.getElementById('stat-active-models');
+
+                        if (approvalRateElement) approvalRateElement.innerText = stats.approval_rate;
+                        if (totalProcessedElement) totalProcessedElement.innerText = stats.total_historical_records;
+                        if (activeModelsElement) {
+                            activeModelsElement.innerText = stats.active_models ? stats.active_models.length : 0;
+                        }
+                    }
+                }
+
+                if (data.status === 'success' && data.batches.length > 0) {
+                    window.batch_data = data.batches.slice(0, 10);
+                    
+                    // Render the Chart now that we have data
+                    renderCharts();
+
+                    window.batch_data.forEach((batch, index) => {
+                        const tr = document.createElement('tr');
+                        
+                        const dateObj = new Date(batch.batch_timestamp);
+                        const formattedDate = dateObj.toLocaleString(undefined, { 
+                            year: 'numeric', month: 'short', day: 'numeric', 
+                            hour: '2-digit', minute: '2-digit', second: '2-digit'
+                        });
+
+                        tr.innerHTML = `
+                            <td>${formattedDate}</td>
+                            <td>${batch.total_processed}</td>
+                            <td><span class="badge badge-approved">${batch.approved}</span></td>
+                            <td><span class="badge badge-flagged">${batch.flagged}</span></td>
+                            <td>
+                                <button class="view-btn" onclick="toggleDetails(${index})">View Details</button>
+                                <button class="view-btn" style="margin-top: 6px; background-color: var(--accent-cyan); color: #0d1a2f; font-weight: bold; border: none;" onclick="downloadCSV(${index})">Download CSV</button>
+                            </td>
+                        `;
+                        tbody.appendChild(tr);
+
+                        const detailsTr = document.createElement('tr');
+                        detailsTr.id = `details-${index}`;
+                        detailsTr.className = 'details-row';
+                        
+                        let detailsHtml = `
+                            <td colspan="5">
+                                <div class="details-table-container">
+                                    <table class="details-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Image File Name</th>
+                                                <th>Cropping Method</th>
+                                                <th>Status</th>
+                                                <th>Weighted Age</th>
+                                                <th>Individual Models</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="details-body-${index}">
+                                        </tbody>
+                                    </table>
+                                    
+                                    <div id="details-pagination-${index}" style="margin-top: 10px; text-align: center; color: var(--accent-cyan);">
+                                    </div>
+                                </div>
+                            </td>
+                        `;
+                        
+                        detailsTr.innerHTML = detailsHtml;
+                        tbody.appendChild(detailsTr);
+                    });
+                } else if (data.status === 'success') {
+                     tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;">No history found for this user.</td></tr>';
+                     // Clear chart if no data
+                     if (volumeChartInstance) volumeChartInstance.destroy();
+                } else {
+                     tbody.innerHTML = `<tr><td colspan="5" style="text-align: center;">Error loading data: ${data.message}</td></tr>`;
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching history:', error);
+                document.getElementById('historyBody').innerHTML = '<tr><td colspan="5" style="text-align: center;">Failed to connect to server.</td></tr>';
+            });
+    }
+
+    function renderCharts() {
+        if (!window.batch_data || window.batch_data.length === 0) return;
+
+        // Reverse data so oldest is on the left
+        const chronologicalData = [...window.batch_data].reverse();
+
+        const labels = chronologicalData.map(b => {
+            const d = new Date(b.batch_timestamp);
+            return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${d.getMinutes().toString().padStart(2, '0')}`;
+        });
+        const approvedData = chronologicalData.map(b => b.approved);
+        const flaggedData = chronologicalData.map(b => b.flagged);
+
+        const ctx = document.getElementById('batchVolumeChart').getContext('2d');
+
+        if (volumeChartInstance) {
+            volumeChartInstance.destroy();
+        }
+
+        volumeChartInstance = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Approved',
+                        data: approvedData,
+                        backgroundColor: 'rgba(74, 222, 128, 0.8)',
+                        borderColor: '#4ade80',
+                        borderWidth: 1
+                    },
+                    {
+                        label: 'Flagged',
+                        data: flaggedData,
+                        backgroundColor: 'rgba(248, 113, 113, 0.8)',
+                        borderColor: '#f87171',
+                        borderWidth: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { 
+                        stacked: true,
+                        grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                        ticks: { color: '#b0c4de' }
+                    },
+                    y: { 
+                        stacked: true,
+                        grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                        ticks: { color: '#b0c4de' }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        labels: { color: '#ffffff' }
+                    }
+                }
+            }
+        });
+    }
+
+    function toggleDetails(index) {
+        const detailsRow = document.getElementById(`details-${index}`);
+        if (detailsRow.style.display === 'table-row') {
+            detailsRow.style.display = 'none';
+        } else {
+            detailsRow.style.display = 'table-row';
+            
+            if (!window.batch_pages[index]) {
+                renderDetailsPage(index, 1);
+            }
+        }
+    }
+
+    function downloadCSV(index) {
+        const batch = window.batch_data[index];
+        if (!batch) {
+            alert("Error: Batch data not found.");
+            return;
+        }
+
+        let modelNames = new Set();
+        batch.records.forEach(record => {
+            if (record.models) {
+                record.models.forEach(m => modelNames.add(m.model_name));
+            }
+        });
+        const modelsArray = Array.from(modelNames);
+
+        let csvContent = "Run Timestamp,Image File Name,Cropping Method,Status,Weighted Age";
+        modelsArray.forEach(m => {
+            csvContent += `,${m}`; 
+        });
+        csvContent += "\n";
+
+        batch.records.forEach(record => {
+            let row = [
+                batch.batch_timestamp,
+                record.image_file_name || 'N/A',
+                record.segmentation_model || 'N/A',
+                record.segmentation_approved || 'N/A',
+                record.weighted_predicted_age || 'N/A'
+            ];
+
+            let recordModels = {};
+            if (record.models) {
+                record.models.forEach(m => {
+                    recordModels[m.model_name] = m.prediction !== null ? m.prediction : 'N/A';
+                });
+            }
+
+            modelsArray.forEach(m => {
+                row.push(recordModels[m] || 'N/A');
+            });
+
+            csvContent += row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',') + "\n";
+        });
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        
+        const dateStr = new Date(batch.batch_timestamp).toISOString().replace(/[:.]/g, '-');
+        link.setAttribute("download", `Chumputer_Run_Details_${dateStr}.csv`);
+        
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    function renderDetailsPage(batchIndex, page) {
+        const batch = window.batch_data[batchIndex];
+        const tbody = document.getElementById(`details-body-${batchIndex}`);
+        const paginationContainer = document.getElementById(`details-pagination-${batchIndex}`);
+
+        const totalRecords = batch.records.length;
+        const totalPages = Math.ceil(totalRecords / ROWS_PER_PAGE);
+
+        if (page < 1) page = 1;
+        if (page > totalPages) page = totalPages;
+
+        window.batch_pages[batchIndex] = page;
+
+        const startIndex = (page - 1) * ROWS_PER_PAGE;
+        const endIndex = startIndex + ROWS_PER_PAGE;
+        const paginatedRecords = batch.records.slice(startIndex, endIndex);
+
+        let rowsHtml = '';
+        paginatedRecords.forEach(record => {
+            const badgeClass = record.segmentation_approved === 'Y' ? 'badge-approved' : 'badge-flagged';
+            
+            let modelsDisplay = '<em style="color: #666;">No models recorded</em>';
+            if (record.models && record.models.length > 0) {
+                modelsDisplay = record.models.map(m => {
+                    const predValue = m.prediction !== null ? m.prediction : 'N/A';
+                    return `<div style="font-size: 0.85rem; margin-bottom: 2px;">
+                                <span style="color: var(--accent-cyan);">${m.model_name}:</span> ${predValue}
+                            </div>`;
+                }).join('');
+            }
+
+            rowsHtml += `
+                <tr>
+                    <td>${record.image_file_name || 'N/A'}</td>
+                    <td>${record.segmentation_model || 'N/A'}</td>
+                    <td><span class="badge ${badgeClass}">${record.segmentation_approved || 'N/A'}</span></td>
+                    <td style="font-weight: bold;">${record.weighted_predicted_age || 'N/A'}</td>
+                    <td>${modelsDisplay}</td>
+                </tr>
+            `;
+        });
+
+        tbody.innerHTML = rowsHtml;
+
+        let paginationHtml = '';
+        if (totalPages > 1) { 
+            const btnStyle = "padding: 4px 10px; margin: 0 5px; cursor: pointer; background: var(--blue-medium); color: white; border: 1px solid var(--blue-light); border-radius: 4px;";
+            const disabledStyle = "opacity: 0.5; cursor: not-allowed;";
+
+            paginationHtml += `<div style="display: flex; justify-content: center; align-items: center; gap: 15px;">`;
+            paginationHtml += `<button onclick="renderDetailsPage(${batchIndex}, ${page - 1})" style="${btnStyle} ${page === 1 ? disabledStyle : ''}" ${page === 1 ? 'disabled' : ''}>Previous</button>`;
+            paginationHtml += `<span style="font-size: 0.9rem;">Page ${page} of ${totalPages}</span>`;
+            paginationHtml += `<button onclick="renderDetailsPage(${batchIndex}, ${page + 1})" style="${btnStyle} ${page === totalPages ? disabledStyle : ''}" ${page === totalPages ? 'disabled' : ''}>Next</button>`;
+            paginationHtml += `</div>`;
+        }
+        
+        paginationContainer.innerHTML = paginationHtml;
+    }
+</script>
+{% endblock %}

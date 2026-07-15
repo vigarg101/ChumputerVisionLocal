@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+
+{% block title %}Pipeline Dashboard | Visual AI{% endblock %}
+
+{% block content %}
+
+    <section class="input-section">    
+
+        <div id="analysis-step", style="display: block;">
+            <h2>2. Run Analysis</h2>
+            <div class="form-group">
+                <label>Select Models to Utilize:</label>
+                <div class="checkbox-group">
+                    <span id="models-loading" style="color: #666; font-style: italic;">Loading active models from database...</span>
+                </div>
+            </div>
+            <button onclick="runPipeline()">Start Analysis</button>
+        </div>
+
+    </section>
+
+    <section class="results-section">
+        <h3>Analysis Results</h3>
+
+        <div id="export-container" style="display: none; text-align: right; margin-bottom: 10px;">
+            <button onclick="exportTableToCSV('pipeline_results.csv')" class="btn-success" style="width: auto; padding: 8px 16px; font-size: 0.9rem; display: inline-block; margin: 0;">
+                Download CSV
+            </button>
+        </div>
+
+        <div id="resultsContainer">
+            <pre id="resultsArea">Configure parameters above and click "Start Analysis" to view results.</pre>
+        </div>
+    </section>   
+
+    <div id="status-container", style="display: none;">
+            <div id="loading">Processing data... This may take a few moments.</div>
+    </div>
+    
+{% endblock %}
+
+
+
+{% block scripts %}
+    <script>
+
+        addEventListener('DOMContentLoaded', () => {
+            fetchModels();
+        });
+
+        function fetchModels() {
+            fetch('/api/models')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        const checkboxGroup = document.querySelector('.checkbox-group');
+                        checkboxGroup.innerHTML = ''; 
+
+                        data.models.forEach(model => {
+                            const label = document.createElement('label');
+                            label.innerHTML = `<input type="checkbox" name="model" value="${model}"> ${model}`;
+                            checkboxGroup.appendChild(label);
+                        });
+                    } else {
+                        checkboxGroup.innerHTML = `<span style="color: red;">Error fetching models: ${data.message}</span>`;
+                        console.error('Error fetching models:', data.message);
+                    }
+                })
+                .catch(error => {
+                    const checkboxGroup = document.querySelector('.checkbox-group');
+                    checkboxGroup.innerHTML = `<span style="color: red;">Network error while fetching models.</span>`;
+                    console.error('Network error while fetching models:', error);
+                });
+        }
+
+        async function runPipeline() {
+            const checkboxes = document.querySelectorAll('input[name="model"]:checked');
+            const selectedModels = Array.from(checkboxes).map(cb => cb.value);
+
+
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('resultsContainer').innerHTML = 
+                '<pre id="resultsArea">Running analysis pipeline... This may take time depending on GPU load.</pre>';
+
+            document.getElementById('export-container').style.display = 'none';
+
+            try {
+                const response = await fetch('/api/run_pipeline', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        selectedModels: selectedModels 
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    // Wrap the server-provided HTML in your existing container class for CSS styling
+                    document.getElementById('resultsContainer').innerHTML = 
+                        `<div class="results-table-container">${data.results}</div>`;
+
+                    document.getElementById('export-container').style.display = 'block';
+
+                    
+                } else {
+                    document.getElementById('resultsContainer').innerHTML = 
+                        `<pre id="resultsArea">Error encountered: ${data.message}</pre>`;
+                }
+
+
+            } catch (error) {
+                document.getElementById('resultsContainer').innerHTML = 
+                    '<pre id="resultsArea">Network Error: Could not connect to the server. Is Flask running?</pre>';
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+
+
+
+        function exportTableToCSV(filename) {
+            const table = document.querySelector('.results-table-container table');
+            if (!table) {
+                alert("No table found to export.");
+                return;
+            }
+
+            let csv = [];
+            const rows = table.querySelectorAll("tr");
+
+            for (let i = 0; i < rows.length; i++) {
+                let row = [], cols = rows[i].querySelectorAll("td, th");
+                
+                for (let j = 0; j < cols.length; j++) {
+                    let data = cols[j].innerText.replace(/(\r\n|\n|\r)/gm, '').trim();
+                    data = data.replace(/"/g, '""');
+                    row.push('"' + data + '"');
+                }
+                csv.push(row.join(","));
+            }
+
+            downloadCSV(csv.join("\n"), filename);
+        }
+
+        function downloadCSV(csv, filename) {
+            let csvFile = new Blob([csv], {type: "text/csv"});
+            let downloadLink = document.createElement("a");
+            
+            downloadLink.download = filename;
+            downloadLink.href = window.URL.createObjectURL(csvFile);
+            downloadLink.style.display = "none";
+            
+            document.body.appendChild(downloadLink);
+            downloadLink.click();
+            document.body.removeChild(downloadLink);
+        }
+    </script>
+{% endblock %}
