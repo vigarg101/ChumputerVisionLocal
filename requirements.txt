@@ -1,0 +1,15 @@
+Flask==3.0.3
+Werkzeug==3.0.3
+requests==2.31.0
+gunicorn==21.2.0  
+
+tensorflow==2.15.0
+torch==2.2.0
+
+Pillow==10.2.0
+opencv-python-headless==4.9.0.80  
+scikit-image==0.22.0
+
+numpy==1.26.4
+pandas==2.2.1
+tqdm==4.66.2

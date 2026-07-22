@@ -1,6 +1,6 @@
 from flask import Flask, json, render_template, request, jsonify, send_file
 import os
-import Model3Functions 
+import ChumputerFunctions 
 import traceback
 import pandas as pd
 import PIL.Image as Image
@@ -25,7 +25,7 @@ global_index_mapping = []
 global_username = "VGarg_Test"
 global_index_run = 0
 
-
+model_path_dict = {}
 
 #These will be for long format models
 global_json_array_long = []
@@ -41,7 +41,7 @@ global_approval_rate = 0.0
 print("Server starting: Loading models into VRAM. Please wait...")
 
 try:
-    predictor, target_feats, weights, weights_np, strategy = Model3Functions.initialize_pipeline()
+    predictor, target_feats, weights, weights_np, strategy = ChumputerFunctions.initialize_pipeline()
     print("Models loaded successfully!")
     
     print("Syncing latest Run ID from database...")
@@ -61,14 +61,19 @@ except Exception as e:
 
 
 
-@app.route('/')
-def home():
+@app.route('/upload_approve')
+def upload_approve():
     return render_template('upload_approve.html')
 
 
 @app.route('/model_run')
 def model_run():
     return render_template('model_run.html')
+
+
+@app.route('/')
+def history_page():
+    return render_template('history2.html', global_username=global_username)
 
 
 @app.route('/api/image')
@@ -124,7 +129,7 @@ def handle_approval():
         print(f"DEBUG: Found {len(saved_files)} files physically sitting in {global_scratch_dir}")
         print(f"DEBUG: First 5 files look like this: {saved_files[:5]}")
 
-        x_test, test_images_link, random_images_data, confidence_scores = Model3Functions.process_images2(
+        x_test, test_images_link, random_images_data, confidence_scores = ChumputerFunctions.process_images2(
             global_scratch_dir, predictor, target_feats, weights, weights_np
         )
         
@@ -220,16 +225,17 @@ def handle_run():
     selected_models = data.get('selectedModels')
 
 
-    global global_x_test, global_test_images_link, global_index_mapping, global_json_array, global_index_run, global_json_array_long
+    global global_x_test, global_test_images_link, global_index_mapping, global_json_array, global_index_run, global_json_array_long, global_scratch_dir
 
+    global model_path_dict
 
     try:
 
         global_json_array_long.clear()
 
         print(f"Running predictions with: {selected_models}")
-        model_predictions = Model3Functions.run_predictions(
-            selected_models, global_x_test, global_test_images_link, strategy
+        model_predictions = ChumputerFunctions.run_predictions(
+            selected_models, global_x_test, global_test_images_link, strategy, base_folder=model_path_dict
         )
 
 
@@ -331,9 +337,7 @@ def handle_run():
 
 
 
-@app.route('/history')
-def history_page():
-    return render_template('history2.html', global_username=global_username)
+
 
 @app.route('/api/history', methods=['GET'])
 def get_history():
@@ -421,6 +425,10 @@ def get_history():
 @app.route('/api/models', methods=['GET'])
 def get_models():
 
+
+    global global_scratch_dir, model_path_dict
+
+
     "Fetches available models from the database"
     api_url = "https://apex.psmfc.org/pacfin/data_marts/pt/chumputer_models"
 
@@ -430,6 +438,7 @@ def get_models():
             data = response.json()
             models = data.get('models', [])
             model_names = [model.get('model_name') for model in models if 'model_name' in model]
+            model_path_dict.update({model_name: "/opt/chumputer" for model_name in model_names})
             return jsonify({"status": "success", "models": model_names})
         else:
             print(f"APEX Error: {response.status_code}")

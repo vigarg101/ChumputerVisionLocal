@@ -513,22 +513,23 @@ def save_predictions_to_csv(df: pd.DataFrame, output_path: str):
 
 ####################################################################################################
 
-def run_selected_models(selected_keys: list, x_test: np.ndarray, strategy) -> dict:
+def run_selected_models(selected_keys: list, x_test: np.ndarray, strategy, base_folder: str) -> dict:
     """Run predictions for selected models.
     
     Args:
         selected_keys: List of model keys to run (e.g., ['convnext', 'effnet'])
         x_test: Test data for predictions
-        strategy: TensorFlow distribution strategy"""
+        strategy: TensorFlow distribution strategy
+        base_folder: Base folder for model files"""
     
 
     results = {}
     weights = []
 
     if 'convnext' in selected_keys:
-        convnext_model = load_convnext_model("/opt/chumputer/ConvNeXtLarge_SAM_model_file.hdf5", strategy)
+        convnext_model = load_convnext_model(f"{base_folder}/ConvNeXtLarge_SAM_model_file.hdf5", strategy)
         results['convnext'] = predict_with_model(convnext_model, x_test)
-        with open('/opt/chumputer/ConvNeXtLargeSAM_SGD_history.pkl', 'rb') as f:
+        with open(f"{base_folder}/ConvNeXtLargeSAM_SGD_history.pkl", 'rb') as f:
             ConvNeXt_history = pickle.load(f)
         ConvNeXt_test_mse = ConvNeXt_history['val_mse']
         ConvNeXt_min_val_mse = min(ConvNeXt_test_mse)
@@ -538,9 +539,9 @@ def run_selected_models(selected_keys: list, x_test: np.ndarray, strategy) -> di
 
         
     if 'effnet' in selected_keys:
-        effnet_model = load_effnetv2l_model("/opt/chumputer/effnetv2l_SAM_model_file.hdf5", strategy)
+        effnet_model = load_effnetv2l_model(f"{base_folder}/effnetv2l_SAM_model_file.hdf5", strategy)
         results['effnet'] = predict_with_model(effnet_model, x_test)
-        with open('/opt/chumputer/effnetv2lhistory_2.pkl', 'rb') as f:
+        with open(f"{base_folder}/effnetv2lhistory_2.pkl", 'rb') as f:
             effnet_history = pickle.load(f)
         effnet_test_mse = effnet_history['val_mse']        
         effnet_min_val_mse = min(effnet_test_mse)
@@ -550,9 +551,9 @@ def run_selected_models(selected_keys: list, x_test: np.ndarray, strategy) -> di
 
 
     if 'nasnet' in selected_keys:
-        nasnet_model = load_nasnet_model("/opt/chumputer/NASNetLarge_SAM_model_file.hdf5", strategy)
+        nasnet_model = load_nasnet_model(f"{base_folder}/NASNetLarge_SAM_model_file.hdf5", strategy)
         results['nasnet'] = predict_with_model(nasnet_model, x_test)
-        #with open('/opt/chumputer/NASNetLarge_history.pkl', 'rb') as f:
+        #with open(f"{base_folder}/NASNetLarge_history.pkl", 'rb') as f:
             #NASNet_history = pickle.load(f)
         nasnet_min_val_mse = 0.0865
 
@@ -589,38 +590,39 @@ def run_selected_models(selected_keys: list, x_test: np.ndarray, strategy) -> di
 
 
 
-def run_selected_models2(selected_keys: list, x_test: np.ndarray, strategy) -> pd.DataFrame:
+def run_selected_models2(selected_keys: list, x_test: np.ndarray, strategy, base_folder_dict: dict) -> pd.DataFrame:
     """Run predictions for selected models.
     
     Args:
         selected_keys: List of model keys to run (e.g., ['convnext', 'effnet'])
         x_test: Test data for predictions
         strategy: TensorFlow distribution strategy
+        base_folder_dict: Dictionary containing base folders for each model
     """
     
     predictions = {}
     raw_weights = {}
 
     if 'ConvNeXt' in selected_keys:
-        convnext_model = load_convnext_model("/opt/chumputer/ConvNeXtLarge_SAM_model_file.hdf5", strategy)
+        convnext_model = load_convnext_model(f"{base_folder_dict['ConvNeXt']}/ConvNeXtLarge_SAM_model_file.hdf5", strategy)
         predictions['ConvNeXt'] = predict_with_model(convnext_model, x_test) + 1
         
-        with open('/opt/chumputer/ConvNeXtLargeSAM_SGD_history.pkl', 'rb') as f:
+        with open(f"{base_folder_dict['ConvNeXt']}/ConvNeXtLargeSAM_SGD_history.pkl", 'rb') as f:
             ConvNeXt_history = pickle.load(f)
         raw_weights['ConvNeXt'] = 1 / min(ConvNeXt_history['val_mse'])
 
         
     if 'effnetv2l' in selected_keys:
-        effnet_model = load_effnetv2l_model("/opt/chumputer/effnetv2l_SAM_model_file.hdf5", strategy)
+        effnet_model = load_effnetv2l_model(f"{base_folder_dict['effnetv2l']}/effnetv2l_SAM_model_file.hdf5", strategy)
         predictions['effnetv2l'] = predict_with_model(effnet_model, x_test) + 1
         
-        with open('/opt/chumputer/effnetv2lhistory_2.pkl', 'rb') as f:
+        with open(f"{base_folder_dict['effnetv2l']}/effnetv2lhistory_2.pkl", 'rb') as f:
             effnet_history = pickle.load(f)
         raw_weights['effnetv2l'] = 1 / min(effnet_history['val_mse'])
 
 
     if 'NASNetLarge' in selected_keys:
-        nasnet_model = load_nasnet_model("/opt/chumputer/NASNetLarge_SAM_model_file.hdf5", strategy)
+        nasnet_model = load_nasnet_model(f"{base_folder_dict['NASNetLarge']}/NASNetLarge_SAM_model_file.hdf5", strategy)
         predictions['NASNetLarge'] = predict_with_model(nasnet_model, x_test) + 1
         
         raw_weights['NASNetLarge'] = 1 / 0.0865 
@@ -793,11 +795,11 @@ def process_images2(base_folder, predictor, target_feats, weights, weights_np):
     return x_test, test_images_link, random_images_data, confidence_scores
 
 
-def run_predictions(selected_keys, x_test, test_images_link, strategy):
+def run_predictions(selected_keys, x_test, test_images_link, strategy, base_folder):
     """Runs the selected models across the processed images using the mirrored strategy."""
     print(f"Running predictions for models: {selected_keys}")
     
-    model_predictions = run_selected_models2(selected_keys, x_test, strategy)
+    model_predictions = run_selected_models2(selected_keys, x_test, strategy, base_folder)
     
     model_predictions['filename'] = test_images_link    
     
@@ -806,44 +808,3 @@ def run_predictions(selected_keys, x_test, test_images_link, strategy):
 
 
 
-
-'''
-if __name__ == "__main__":
-
-    
-    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress all TF logging
-    os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'  # Use PCI order for GPUs
-    os.environ['CUDA_VISIBLE_DEVICES'] = '0,1'  # Make sure both GPUs are visible
-
-    # Setup GPU and load SAM model
-    setup_gpu_memory_growth()
-    sam_path = '/opt/chumputer/Scalevision/crop_vision'
-    predictor, mask_weights, target_feats, weights, weights_np = load_sam_model(sam_path)
-    
-    # Process images from the specified folder
-    #base_folder = '/opt/chumputer/scale_images/subset_images'
-    base_folder = input_image_folder()
-    sam_images = classify_and_store_images(base_folder, predictor, target_feats, weights, weights_np)
-
-    resize_images_in_place(sam_images, target_size=(512, 512))
-    test_images_link = [fname for fname, _ in sam_images]
-    test_images = load_images_from_memory(test_images_link, sam_images)
-
-    processed_test_images, successful_files = process_images_for_cnn(test_images)
-
-    approve_images_for_cnn(processed_test_images, successful_files)
-
-    #x_test = processed_test_images.astype("float32") / 255
-    x_test = np.array(processed_test_images).astype("float32") / 255
-
-    strategy = tf.distribute.MirroredStrategy()
-    #selected_keys = ['convnext']  # Example
-    selected_keys = choose_models()
-    #print (f"Selected models: {selected_keys}")
-    model_predictions = run_selected_models2(selected_keys, x_test, strategy)
-    model_predictions['filename'] = test_images_link    
-    print(model_predictions)
-
-
-
-    #print("hello world")'''

@@ -1,133 +1,6 @@
 {% extends "base.html" %}
 
 {% block content %}
-<style>
-    /* --- Dashboard Specific Styles --- */
-    body {
-      margin: 0;
-      padding: 20px;
-    }
-
-    .dashboard-welcome {
-        margin-bottom: 30px;
-    }
-
-    .dashboard-welcome h2 {
-        font-size: 2.2rem;
-        color: var(--text-light);
-        margin-bottom: 5px;
-        font-weight: 600;
-    }
-
-    .dashboard-welcome p {
-        color: var(--text-muted);
-        font-size: 1.1rem;
-    }
-
-    .grid-container {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr); 
-      gap: 24px; 
-      width: 100%; 
-      margin-bottom: 24px;
-    }
-
-    .panel {
-      background-color: var(--blue-dark);
-      border: 1px solid var(--blue-medium);
-      border-top: 4px solid var(--accent-cyan);
-      border-radius: 12px;
-      padding: 24px 20px;
-      margin: 0;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-      transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
-
-    .panel:hover {
-      transform: translateY(-3px);
-      box-shadow: 0 12px 28px rgba(0, 210, 255, 0.15);
-    }
-
-    .panel h4 {
-      color: var(--text-muted);
-      font-size: 0.9rem;
-      text-transform: uppercase;
-      letter-spacing: 1.5px;
-      margin-bottom: 12px;
-      font-weight: 600;
-    }
-
-    .panel p {
-      font-size: 2.8rem;
-      font-weight: 800;
-      color: var(--text-light);
-      margin: 0;
-      line-height: 1.1;
-      text-shadow: 0 2px 4px rgba(0,0,0,0.5);
-    }
-
-    /* --- Status Badges --- */
-    .badge {
-        padding: 4px 10px;
-        border-radius: 12px;
-        font-size: 0.8rem;
-        font-weight: bold;
-        text-transform: uppercase;
-        display: inline-block;
-        text-align: center;
-        min-width: 40px;
-    }
-    .badge-approved {
-        background-color: rgba(74, 222, 128, 0.15);
-        color: #4ade80;
-        border: 1px solid rgba(74, 222, 128, 0.4);
-    }
-    .badge-flagged {
-        background-color: rgba(248, 113, 113, 0.15);
-        color: #f87171;
-        border: 1px solid rgba(248, 113, 113, 0.4);
-    }
-
-    /* --- Table Specific Styles --- */
-    .details-row { 
-        display: none; 
-        background-color: var(--blue-dark); 
-    }
-    .details-table-container {
-        padding: 15px;
-        border-left: 3px solid var(--accent-cyan);
-        margin-left: 20px;
-    }
-    .details-table { 
-        width: 100%; 
-        margin: 0;
-        background-color: var(--bg-deep);
-    }
-    .details-table th {
-        background-color: #0d1a2f;
-        font-size: 0.8rem;
-    }
-    .view-btn { 
-        cursor: pointer; 
-        padding: 8px 16px; 
-        background: var(--blue-medium); 
-        color: white; 
-        border: 1px solid var(--blue-light); 
-        border-radius: 4px;
-        font-size: 0.9rem;
-        margin: 0;
-        width: 100%;
-        transition: all 0.2s;
-    }
-    .view-btn:hover {
-        background-color: var(--blue-light);
-        border-color: var(--text-light);
-    }
-</style>
-
 <div class="dashboard-welcome">
     <h2>Welcome back, <span style="color: var(--accent-cyan);">{{ global_username }}</span>!</h2>
     <p>Here is the latest overview of your pipeline processing activity.</p>
@@ -167,7 +40,7 @@
 </div>
 
 <div class="input-section" style="margin-bottom: 20px;">
-    <h3 style="color: var(--text-light); border-bottom: 2px solid var(--blue-medium); padding-bottom: 10px;">Recent Pipeline Executions</h3>
+    <h3 class="section-title">Recent Pipeline Executions</h3>
 </div>
 
 <div class="results-table-container">
@@ -195,7 +68,7 @@
     window.batch_data = [];
     window.batch_pages = {}; 
     const ROWS_PER_PAGE = 5; 
-    let volumeChartInstance = null; // Global reference for the chart
+    let volumeChartInstance = null;
 
     document.addEventListener('DOMContentLoaded', () => {
         fetchHistory();
@@ -227,7 +100,6 @@
                 if (data.status === 'success' && data.batches.length > 0) {
                     window.batch_data = data.batches.slice(0, 10);
                     
-                    // Render the Chart now that we have data
                     renderCharts();
 
                     window.batch_data.forEach((batch, index) => {
@@ -283,7 +155,7 @@
                     });
                 } else if (data.status === 'success') {
                      tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;">No history found for this user.</td></tr>';
-                     // Clear chart if no data
+
                      if (volumeChartInstance) volumeChartInstance.destroy();
                 } else {
                      tbody.innerHTML = `<tr><td colspan="5" style="text-align: center;">Error loading data: ${data.message}</td></tr>`;
@@ -298,7 +170,6 @@
     function renderCharts() {
         if (!window.batch_data || window.batch_data.length === 0) return;
 
-        // Reverse data so oldest is on the left
         const chronologicalData = [...window.batch_data].reverse();
 
         const labels = chronologicalData.map(b => {

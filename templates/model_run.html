@@ -3,10 +3,8 @@
 {% block title %}Pipeline Dashboard | Visual AI{% endblock %}
 
 {% block content %}
-
     <section class="input-section">    
-
-        <div id="analysis-step", style="display: block;">
+        <div id="analysis-step" style="display: block;">
             <h2>2. Run Analysis</h2>
             <div class="form-group">
                 <label>Select Models to Utilize:</label>
@@ -16,7 +14,6 @@
             </div>
             <button onclick="runPipeline()">Start Analysis</button>
         </div>
-
     </section>
 
     <section class="results-section">
@@ -33,17 +30,18 @@
         </div>
     </section>   
 
-    <div id="status-container", style="display: none;">
-            <div id="loading">Processing data... This may take a few moments.</div>
+    <div id="status-container" style="display: none;">
+        <div class="progress-wrapper">
+            <div class="progress-text">Processing images... This may take a few moments.</div>
+            <div class="progress-bar-track">
+                <div class="progress-bar-fill"></div>
+            </div>
+        </div>
     </div>
-    
 {% endblock %}
-
-
 
 {% block scripts %}
     <script>
-
         addEventListener('DOMContentLoaded', () => {
             fetchModels();
         });
@@ -62,6 +60,7 @@
                             checkboxGroup.appendChild(label);
                         });
                     } else {
+                        const checkboxGroup = document.querySelector('.checkbox-group');
                         checkboxGroup.innerHTML = `<span style="color: red;">Error fetching models: ${data.message}</span>`;
                         console.error('Error fetching models:', data.message);
                     }
@@ -77,11 +76,9 @@
             const checkboxes = document.querySelectorAll('input[name="model"]:checked');
             const selectedModels = Array.from(checkboxes).map(cb => cb.value);
 
-
-            document.getElementById('loading').style.display = 'block';
-            document.getElementById('resultsContainer').innerHTML = 
-                '<pre id="resultsArea">Running analysis pipeline... This may take time depending on GPU load.</pre>';
-
+            document.getElementById('status-container').style.display = 'block';
+            document.getElementById('resultsContainer').innerHTML = '';
+                /*'<pre id="resultsArea">Running analysis pipeline... This may take time depending on GPU load.</pre>';*/
             document.getElementById('export-container').style.display = 'none';
 
             try {
@@ -96,28 +93,21 @@
                 const data = await response.json();
 
                 if (data.status === 'success') {
-                    // Wrap the server-provided HTML in your existing container class for CSS styling
                     document.getElementById('resultsContainer').innerHTML = 
                         `<div class="results-table-container">${data.results}</div>`;
-
                     document.getElementById('export-container').style.display = 'block';
-
-                    
                 } else {
                     document.getElementById('resultsContainer').innerHTML = 
                         `<pre id="resultsArea">Error encountered: ${data.message}</pre>`;
                 }
 
-
             } catch (error) {
                 document.getElementById('resultsContainer').innerHTML = 
                     '<pre id="resultsArea">Network Error: Could not connect to the server. Is Flask running?</pre>';
             } finally {
-                document.getElementById('loading').style.display = 'none';
+                document.getElementById('status-container').style.display = 'none';
             }
         }
-
-
 
         function exportTableToCSV(filename) {
             const table = document.querySelector('.results-table-container table');
