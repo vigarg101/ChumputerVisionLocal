@@ -46,7 +46,7 @@ try:
     
     print("Syncing latest Run ID from database...")
     try:
-        hist_resp = requests.get("https://apex.psmfc.org/pacfin/data_marts/pt/chumputer_history", timeout=15)
+        hist_resp = requests.get("https://apex.psmfc.org/akfin/data_marts/akmp/chumputer_history", timeout=15)
         if hist_resp.status_code == 200:
             records = hist_resp.json().get('items', [])
             if records:
@@ -298,7 +298,7 @@ def handle_run():
         print(json.dumps(global_json_array_long, indent=4))
         print("====================================\n")
 
-        api_url = "https://apex.psmfc.org/pacfin/data_marts/pt/chumputer_history"
+        api_url = "https://apex.psmfc.org/akfin/data_marts/akmp/chumputer_history"
         x = requests.post(api_url, json=global_json_array, timeout=30)
         
         if x.status_code != 200:
@@ -309,7 +309,7 @@ def handle_run():
             print(f"APEX Server says: {x.text}")
 
 
-        api_url_long = "https://apex.psmfc.org/pacfin/data_marts/pt/chumputer_model_run" 
+        api_url_long = "https://apex.psmfc.org/akfin/data_marts/akmp/chumputer_model_run" 
         x_long = requests.post(api_url_long, json=global_json_array_long, timeout=30)
         
         if x_long.status_code != 200:
@@ -342,7 +342,7 @@ def handle_run():
 @app.route('/api/history', methods=['GET'])
 def get_history():
     """Fetches history from APEX, filters by user, and aggregates into batches."""
-    api_url = "https://apex.psmfc.org/pacfin/data_marts/pt/chumputer_history" 
+    api_url = "https://apex.psmfc.org/akfin/data_marts/akmp/chumputer_history" 
     
     target_user = global_username
 
@@ -378,7 +378,7 @@ def get_history():
 
             active_model_names = []
             try:
-                models_url = "https://apex.psmfc.org/pacfin/data_marts/pt/chumputer_models"
+                models_url = "https://apex.psmfc.org/akfin/data_marts/akmp/chumputer_models"
                 models_resp = requests.get(models_url, timeout=10)
                 if models_resp.status_code == 200:
                     models_data = models_resp.json().get('models', [])
@@ -430,15 +430,23 @@ def get_models():
 
 
     "Fetches available models from the database"
-    api_url = "https://apex.psmfc.org/pacfin/data_marts/pt/chumputer_models"
+    api_url = "https://apex.psmfc.org/akfin/data_marts/akmp/chumputer_models"
 
     try:
         response = requests.get(api_url, timeout=30)
         if response.status_code == 200:
             data = response.json()
-            models = data.get('models', [])
-            model_names = [model.get('model_name') for model in models if 'model_name' in model]
-            model_path_dict.update({model_name: "/opt/chumputer" for model_name in model_names})
+            
+            models = data.get('models', []) 
+            
+            model_names = []
+            
+            for model in models:
+                model_name = model.get('model_name') or model.get('MODEL_NAME')
+                base_folder = model.get('base_folder_path') or model.get('BASE_FOLDER_PATH') #or "/opt/chumputer"         
+                if model_name:
+                    model_names.append(model_name)
+                    model_path_dict[model_name] = base_folder
             return jsonify({"status": "success", "models": model_names})
         else:
             print(f"APEX Error: {response.status_code}")
