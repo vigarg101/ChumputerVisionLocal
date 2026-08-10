@@ -5,6 +5,7 @@ gunicorn==21.2.0
 
 tensorflow==2.15.0
 torch==2.2.0
+torchvision
 
 Pillow==10.2.0
 opencv-python-headless==4.9.0.80  
