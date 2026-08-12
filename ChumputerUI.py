@@ -71,9 +71,25 @@ def model_run():
     return render_template('model_run.html')
 
 
-@app.route('/')
+@app.route('/history', methods=['GET', 'POST'])
 def history_page():
+
+    global global_username  
+    
+    if request.method == 'POST':
+        selected_user = request.form.get('username')
+        
+        if selected_user:
+            global_username = selected_user
+            print(f"Session updated. User proceeding as: {global_username}")
+
+
     return render_template('history2.html', global_username=global_username)
+
+
+@app.route('/')
+def login():
+    return render_template('login.html', global_username=global_username)
 
 
 @app.route('/api/image')
@@ -339,6 +355,7 @@ def handle_run():
 
 
 
+
 @app.route('/api/history', methods=['GET'])
 def get_history():
     """Fetches history from APEX, filters by user, and aggregates into batches."""
@@ -459,6 +476,42 @@ def get_models():
 
 
 
+@app.route('/api/users', methods=['GET'])
+def get_users():
+
+
+    global global_scratch_dir, model_path_dict
+
+
+    "Fetches available users from the database"
+    api_url = "https://apex.psmfc.org/akfin/data_marts/akmp/chumputer_users"
+
+    try:
+        response = requests.get(api_url, timeout=30)
+        if response.status_code == 200:
+            data = response.json()
+            
+            users = data.get('users', []) 
+            
+            frontend_users = []
+            
+            for user in users:
+                username = user.get('username') or user.get('USERNAME')
+                organization = user.get('organization') or user.get('ORGANIZATION')  
+                if username:
+                    frontend_users.append({"username": username, "organization": organization})
+            return jsonify({"status": "success", "users": frontend_users})
+        else:
+            print(f"APEX Error: {response.status_code}")
+            return jsonify({"status": "error", "message": "Failed to fetch users from APEX"}), 500
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+
+
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5001, debug=True, use_reloader=False)
+    app.run(host='0.0.0.0', port=5004, debug=True, use_reloader=False)
