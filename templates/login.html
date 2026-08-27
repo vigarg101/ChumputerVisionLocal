@@ -9,7 +9,6 @@
 </head>
 <body>
 
-
     <div class="login-wrapper">
         <div class="login-container">
             <header>
@@ -21,11 +20,8 @@
 
                 <div class="form-group">
                     <label for="username">Username</label>
-                    <div class="select-wrapper">
-                        <select id="username" name="username" required>
-                            <option value="" disabled selected>Select a username...</option>
-                        </select>
-                    </div>
+                    <!-- FIXED: Added the input field so the form can actually submit the username -->
+                    <input type="text" id="username" name="username" readonly placeholder="Authenticating...">
                 </div>
 
                 <div class="form-group">
@@ -41,63 +37,36 @@
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             
-
             let usersData = [];
-            const usernameSelect = document.getElementById('username');
+            
+            const usernameInput = document.getElementById('username');
             const orgInput = document.getElementById('organization');
             const loginBtn = document.getElementById('loginBtn');
                 
-
-
             fetch('/api/users')
                 .then(response => response.json())
                 .then(data => {
-                    if (data.status === 'success') {
+                    if (data.status === 'success' && data.users.length > 0) {
                         usersData = data.users;
 
+                        usernameInput.value = usersData[0].username;
                         
+                        orgInput.value = usersData[0].organization;
 
-                        usersData.forEach(user => {
-                            const option = document.createElement('option');
-                            option.value = user.username;
-                            option.textContent = user.username;
-                            usernameSelect.appendChild(option);
-                        });
-
-
+                        loginBtn.textContent = 'Proceed as ' + usersData[0].username;
+                        loginBtn.style.display = 'block'; 
 
                     } else {
                         console.error('Failed to fetch users:', data.message);
+                        usernameInput.placeholder = "Authentication Failed";
                     }
                 })
                 .catch(error => {
                     console.error('Error fetching users:', error);
+                    usernameInput.placeholder = "Network Error";
                 });
 
-
-
-            
-
-            usernameSelect.addEventListener('change', function() {
-                const selectedUsername = this.value;
-                
-                const matchedUser = usersData.find(u => u.username === selectedUsername);
-                
-                if (matchedUser) {
-                    orgInput.value = matchedUser.organization;
-
-
-                    loginBtn.textContent = 'Proceed as ' + matchedUser.username;
-                    loginBtn.style.display = 'block'; 
-                } else {
-                    orgInput.value = '';
-                    loginBtn.style.display = 'none';
-                }
-            });
         });
-
-       
-
     </script>
 </body>
 </html>
