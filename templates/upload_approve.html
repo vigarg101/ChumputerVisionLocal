@@ -72,6 +72,35 @@
         let currentPage = 1;
         let currentPath = null;
 
+
+        function checkFileSize(fileList, maxMbSize) {
+            const MAX_BYTES = maxMbSize * 1024 * 1024; 
+            
+            let batches = [];
+            let currentBatch = [];
+            let currentBatchSize = 0;
+
+            for (let i = 0; i < fileList.length; i++) {
+                let file = fileList[i];
+                
+                if ((currentBatchSize + file.size) > MAX_BYTES && currentBatch.length > 0) {
+                    batches.push(currentBatch);
+                    currentBatch = [];
+                    currentBatchSize = 0;
+                }
+                
+                currentBatch.push(file);
+                currentBatchSize += file.size;
+            }
+
+
+            if (currentBatch.length > 0) {
+                batches.push(currentBatch);
+            }
+
+            return batches;
+        }
+
         async function fetchAndBuildGrid() {
             const fileInput = document.getElementById('imageUploads');
             const statusMsg = document.getElementById('status-message');
@@ -90,40 +119,66 @@
 
             fetchBtn.disabled = true;
 
-            const formData = new FormData();
-            for (let i = 0; i < fileInput.files.length; i++) {
-                formData.append('images', fileInput.files[i]);
-            }
+
+            const filesArray = Array.from(fileInput.files);
+            const batches = checkFileSize(filesArray, 32);
+
+    
 
             try {
-                const response = await fetch('/api/approve', {
-                    method: 'POST',
-                    body: formData 
-                });
 
-                const data = await response.json();
+            
 
-                if (data.status === 'success') {
-                    /*statusMsg.innerText = '';*/
-                    document.getElementById('status-container').style.display = 'none';
-                    all_images = data.results; 
-                    currentPage = 1; 
-                    
-                    document.getElementById('post-approval-step').style.display = 'block';
+                for (let i=0; i < batches.length; i++) {
+                    const batch = batches[i];
+                    const batchFormData = new FormData();
 
-                    if (!Array.isArray(all_images) || all_images.length === 0) {
-                        document.getElementById('image-grid').innerHTML = '<p>No images found.</p>';
-                        document.getElementById('pagination-controls').style.display = 'none';
-                        return;
-                    } else {
-                        document.getElementById('pagination-controls').style.display = 'flex';
-                        renderCurrentPage(); 
+                    const isLastBatch = (i === batches.length - 1);
+
+                    for (let j = 0; j < batch.length; j++) {
+                        batchFormData.append('images', batch[j]);
                     }
 
-                } else {
-                    statusMsg.innerText = `Error: ${data.message}`;
-                    statusMsg.style.color = "#c94c4c";
+                    batchFormData.append('batch_index', i);
+                    batchFormData.append('is_last_batch', isLastBatch);
+
+                    document.querySelector('.progress-text').innerText = 
+                        `Uploading batch ${i + 1} of ${batches.length}...`;
+
+                    const response = await fetch('/api/approve', {
+                        method: 'POST',
+                        body: batchFormData
+                    });
+
+                    const data = await response.json();
+
+                    if (data.status !== 'success') {
+                        statusMsg.innerText = `Error: ${data.message}`;
+                        statusMsg.style.color = "#c94c4c";
+                        return;
+                    }
+
+                    if (isLastBatch) {
+                
+                        /*statusMsg.innerText = '';*/
+                        document.getElementById('status-container').style.display = 'none';
+                        all_images = data.results; 
+                        currentPage = 1; 
+                        
+                        document.getElementById('post-approval-step').style.display = 'block';
+
+                        if (!Array.isArray(all_images) || all_images.length === 0) {
+                            document.getElementById('image-grid').innerHTML = '<p>No images found.</p>';
+                            document.getElementById('pagination-controls').style.display = 'none';
+                            return;
+                        } else {
+                            document.getElementById('pagination-controls').style.display = 'flex';
+                            renderCurrentPage(); 
+                        }
+
+                    }
                 }
+                 
             } catch (error) {
                 console.error("Upload Error:", error);
                 statusMsg.innerText = "Network Error: Could not upload files to the server.";
@@ -131,7 +186,10 @@
             } finally {
                 fetchBtn.disabled = false;
             }
+
         }
+        
+        
 
         function renderCurrentPage() {
             const startIndex = (currentPage - 1) * images_per_page;
@@ -154,52 +212,7 @@
             renderCurrentPage();
         }
 
-        function renderGrid(images) {
-            const grid = document.getElementById('image-grid');
-            grid.innerHTML = ''; 
-
-            if (!Array.isArray(images) || images.length === 0) {
-                grid.innerHTML = '<p>No images found in this directory.</p>';
-                return;
-            }
-
-            images.forEach(item => {
-                const card = document.createElement('div');
-                card.className = 'grid-card';
-
-                const wrapper = document.createElement('div');
-                wrapper.className = 'image-wrapper';
-
-                const imgMask = document.createElement('img');
-                imgMask.src = `/api/image?path=${encodeURIComponent(item.masked_filepath)}`; 
-
-                const imgOrig = document.createElement('img');
-                imgOrig.src = `/api/image?path=${encodeURIComponent(item.filepath)}`; 
-
-                const labelMask = document.createElement('div');
-                labelMask.className = 'img-label label-mask';
-                labelMask.innerText = 'Masked';
-                
-                const labelOrig = document.createElement('div');
-                labelOrig.className = 'img-label label-orig';
-                labelOrig.innerText = 'Original';
-                
-                wrapper.appendChild(imgMask);
-                wrapper.appendChild(imgOrig);
-                card.appendChild(wrapper);
-                card.appendChild(labelOrig);
-                card.appendChild(labelMask);
-
-                card.addEventListener('mouseenter', () => {
-                    document.getElementById('preview-panel').style.display = 'block';
-                    document.getElementById('preview-mask').src = `/api/image?path=${encodeURIComponent(item.masked_filepath)}`;
-                    document.getElementById('preview-orig').src = `/api/image?path=${encodeURIComponent(item.filepath)}`;
-                    document.getElementById('preview-path').innerText = item.filepath;
-                });
-                
-                grid.appendChild(card);
-            });
-        }
+        
 
         function renderGrid2(images) {
             const grid = document.getElementById('image-grid');
