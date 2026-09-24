@@ -1,4 +1,4 @@
-from flask import Flask, json, render_template, request, jsonify, send_file
+from flask import Flask, json, render_template, request, jsonify, send_file, redirect, url_for
 import os
 import ChumputerFunctions 
 import traceback
@@ -9,19 +9,16 @@ import numpy as np
 import tempfile
 import shutil
 from werkzeug.utils import secure_filename   
-from datetime import datetime
+from datetime import datetime, time as dtime
 import requests
 from collections import defaultdict
 from apex_logger import ApexLogger
-
-
-
+import time
 
 
 app = Flask(__name__)
 
 db_logger = ApexLogger("https://apex.psmfc.org/akfin/data_marts/akmp")
-
 
 global_organization = "Unknown"
 global_current_log_id = None
@@ -35,13 +32,16 @@ global_index_run = 0
 
 model_path_dict = {}
 
-#These will be for long format models
+# These will be for long format models
 global_json_array_long = []
 global_index_mapping_long = [] 
 
 global_approval_rate = 0.0
- 
 
+global_run_start_time = None
+
+# NEW: Offline mode flag
+global_offline_mode = False
 
 
 def fetch_users_from_apex():
@@ -67,8 +67,6 @@ def fetch_users_from_apex():
         return []
 
 
-
-
 print("Server starting: Loading models into VRAM. Please wait...")
 
 try:
@@ -84,13 +82,11 @@ try:
                 global_index_run = max([int(r.get('run_id', 0)) for r in records if r.get('run_id') is not None], default=0)
         print(f"Run ID synced successfully. Next run will start at: {global_index_run + 1}")
     except Exception as e:
-        print(f"Warning: Could not sync Run ID. Error: {e}")
+        print(f"Warning: Could not sync Run ID (likely offline). Error: {e}")
 
     print("Flask server is ready.")
 except Exception as e:
     print(f"Failed to load models. Check GPU/Paths. Error: {e}")
-
-
 
 
 def check_file_size(file_list, max_size):
@@ -109,9 +105,7 @@ def check_file_size(file_list, max_size):
         pair_size = size1 + size2
 
         if (current_batch_size + pair_size) > MAX_SIZE and current_batch:
-
             indexed_list.append(current_batch)
-            
             current_batch = []
             current_batch_size = 0
 
@@ -125,10 +119,40 @@ def check_file_size(file_list, max_size):
 
 
 
+@app.before_request
+def enforce_mode_routing():
+    global global_offline_mode, global_username, global_organization
+    
+    if request.endpoint == 'static':
+        return
+
+    raw_iap_email = request.headers.get('X-Goog-Authenticated-User-Email')
+
+    if not raw_iap_email:
+
+        global_offline_mode = True
+        global_username = "Offline_Local_User"
+        global_organization = "Local"
+        
+        offline_allowed_endpoints = [
+            'upload_approve', 
+            'model_run', 
+            'handle_approval', 
+            'save_approved', 
+            'handle_run', 
+            'get_models', 
+            'serve_image'
+        ]
+        
+        if request.endpoint and request.endpoint not in offline_allowed_endpoints:
+            return redirect(url_for('upload_approve'))
+    else:
+        global_offline_mode = False
+
 
 @app.route('/upload_approve')
 def upload_approve():
-    return render_template('upload_approve.html')
+    return render_template('upload_approve2.html')
 
 
 @app.route('/model_run')
@@ -176,8 +200,6 @@ def serve_image():
     return send_file(image_path)
 
 
-
-
 @app.route('/api/approve', methods=['POST'])
 def handle_approval():
 
@@ -196,13 +218,12 @@ def handle_approval():
             return jsonify({"status": "error", "message": "Invalid batch index."}), 400
 
     if batch_index == 0:    
-        
         global_current_log_id = db_logger.start_run(
             username=global_username, 
             org=global_organization
         )
 
-        db_logger.log(global_current_log_id, global_username, f"Initializing new run session for {global_organization}...")
+        db_logger.log(global_current_log_id, global_username, f"Initializing new run session for {global_organization} (Offline: {global_offline_mode})...")
 
         global_index_mapping.clear()
         global_json_array.clear()  
@@ -219,9 +240,6 @@ def handle_approval():
         global_scratch_dir = tempfile.mkdtemp(prefix="chumputer_batch_")
         db_logger.log(global_current_log_id, global_username, f"Created temporary remote upload directory: {global_scratch_dir}")
 
-
-        
-
     if 'images' not in request.files:
         return jsonify({"status": "error", "message": "No files were sent in the request."}), 400
 
@@ -237,40 +255,33 @@ def handle_approval():
 
     db_logger.log(global_current_log_id, global_username, f"Saved {len(files)} files from Batch {batch_index + 1}")
 
-
-   
-
-   
-
     if not is_last_batch:
         db_logger.log(global_current_log_id, global_username, f"Batch {batch_index + 1} uploaded successfully.")
         return jsonify({"status": "success", "message": f"Batch {batch_index + 1} uploaded successfully."}) 
 
     try:
-        
-    
         saved_files = os.listdir(global_scratch_dir)
         db_logger.log(global_current_log_id, global_username, f"DEBUG: Found {len(saved_files)} files physically sitting in {global_scratch_dir}")
-        db_logger.log(global_current_log_id, global_username, f"DEBUG: First 5 files look like this: {saved_files[:5]}")
-
-
+        
         x_test, test_images_link, random_images_data, confidence_scores = ChumputerFunctions.process_images2(
             global_scratch_dir, predictor, target_feats, weights, weights_np
         )
-        
+
+        raw_start_time = request.form.get('start_time')
+        if raw_start_time:
+            start_seconds = float(raw_start_time) / 1000.0
+            total_elapsed_time = time.time() - start_seconds
+            print(f"\n==========================================")
+            print(f"DEBUG: Total elapsed time for all batches: {total_elapsed_time:.2f} seconds.")
+            print(f"==========================================")
+
         global_x_test = x_test
         global_test_images_link = test_images_link
-
         x = 0
-
-        
 
         for img in random_images_data:
             tiff_img_path = img['filepath']
-
             filename = os.path.basename(tiff_img_path)
-
-            
 
             temp_json = {
                 "username": global_username,
@@ -280,7 +291,6 @@ def handle_approval():
 
             global_index_mapping.append([filename, x])
             global_json_array.append(temp_json)
-
             x += 1
             
             tiff_image = Image.open(tiff_img_path)
@@ -291,17 +301,13 @@ def handle_approval():
                 jpeg_image.save(jpg_img_path)
             img['filepath'] = jpg_img_path
 
-
-        
         db_logger.log(global_current_log_id, global_username, f"Batch processing completed. Total images processed: {len(random_images_data)}")
         return jsonify({"status": "success", "results": random_images_data})
-
 
     except Exception as e:
         db_logger.log(global_current_log_id, global_username, f"Error during approval handling: {e}")
         traceback.print_exc() 
         return jsonify({"status": "error", "message": str(e)}), 500
-
 
 
 @app.route('/api/save_approved', methods=['POST'])
@@ -321,11 +327,8 @@ def save_approved():
             for link in global_test_images_link
         ]
         
-
         approved_stems = {Path(p).stem for p in approved_paths}
         dataset_stems = [Path(path).stem for path in normalized_links]
-        db_logger.log(global_current_log_id, global_username, f"DEBUG - Frontend Stems: {approved_stems}")
-        db_logger.log(global_current_log_id, global_username, f"DEBUG - Backend Stems (First 5): {dataset_stems[:5]}")
         
         valid_indices = [
             i for i, path in enumerate(normalized_links) 
@@ -352,31 +355,25 @@ def save_approved():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-
 @app.route('/api/run_pipeline', methods=['POST'])
 def handle_run():
     data = request.json
     selected_models = data.get('selectedModels')
 
-
-    global global_x_test, global_test_images_link, global_index_mapping, global_json_array, global_index_run, global_json_array_long, global_scratch_dir
-
-    global model_path_dict, global_current_log_id, global_username
+    global global_x_test, global_test_images_link, global_index_mapping, global_json_array
+    global global_index_run, global_json_array_long, global_scratch_dir
+    global model_path_dict, global_current_log_id, global_username, global_offline_mode
 
     try:
-
         global_json_array_long.clear()
-
         db_logger.log(global_current_log_id, global_username, f"Starting prediction run with models: {selected_models}")
+        
         model_predictions = ChumputerFunctions.run_predictions(
             selected_models, global_x_test, global_test_images_link, strategy, base_folder=model_path_dict
         )
 
-
         for idx in global_index_mapping:
-
             global_index_run += 1
-
             matching_rows = model_predictions.loc[model_predictions['filename'] == idx[0]]
 
             if not matching_rows.empty:
@@ -385,69 +382,51 @@ def handle_run():
                 global_json_array[idx[1]]['segmentation_approved'] = "Y" 
                 global_json_array[idx[1]]['run_id'] = global_index_run
 
-                
                 for model in selected_models:
-
                     model_col = model
-
+                    temp_json_long = {"run_id": global_index_run}
+                    temp_json_long["model_name"] = model 
+                    
                     if model_col in row:
-                        temp_json_long = {
-                            "run_id": global_index_run
-                        }
-                        temp_json_long["model_name"] = model 
                         temp_json_long["prediction"] = float(row[model_col])
-                        global_json_array_long.append(temp_json_long)
-
                     else:
-                        temp_json_long = {
-                            "run_id": global_index_run
-                        }
-                        temp_json_long["model_name"] = model
                         temp_json_long["prediction"] = None
-                        global_json_array_long.append(temp_json_long)
-                
-
+                        
+                    global_json_array_long.append(temp_json_long)
             else:
                 global_json_array[idx[1]]['segmentation_approved'] = "N"
                 global_json_array[idx[1]]['run_id'] = global_index_run
-
                 temp_json_long = {
-                    "run_id": global_index_run
+                    "run_id": global_index_run,
+                    "model_name": None,
+                    "prediction": None
                 }
-                temp_json_long["model_name"] = None
-                temp_json_long["prediction"] = None
                 global_json_array_long.append(temp_json_long)
-
-            
-    
-            
-
-            
             
         db_logger.log(global_current_log_id, global_username, "Final JSON array generated.")
-        db_logger.log(global_current_log_id, global_username, f"Final JSON Array: {json.dumps(global_json_array, indent=4)}")
-        db_logger.log(global_current_log_id, global_username, f"Final Long Format JSON Array: {json.dumps(global_json_array_long, indent=4)}")
-        db_logger.log(global_current_log_id, global_username, "====================================")
 
-        api_url = "https://apex.psmfc.org/akfin/data_marts/akmp/chumputer_history"
-        x = requests.post(api_url, json=global_json_array, timeout=30)
-        
-        if x.status_code != 200:
-            db_logger.log(global_current_log_id, global_username, f"Warning: Failed to save to database. Status Code: {x.status_code}")
-            db_logger.log(global_current_log_id, global_username, f"APEX Error Message: {x.text}") 
+        # ==========================================
+        # BYPASS APEX DB SAVING IF IN OFFLINE MODE
+        # ==========================================
+        if not global_offline_mode:
+            api_url = "https://apex.psmfc.org/akfin/data_marts/akmp/chumputer_history"
+            x = requests.post(api_url, json=global_json_array, timeout=30)
+            
+            if x.status_code != 200:
+                db_logger.log(global_current_log_id, global_username, f"Warning: Failed to save to database. Status Code: {x.status_code}")
+                db_logger.log(global_current_log_id, global_username, f"APEX Error Message: {x.text}") 
+            else:
+                db_logger.log(global_current_log_id, global_username, "Successfully saved to APEX database!")
+
+            api_url_long = "https://apex.psmfc.org/akfin/data_marts/akmp/chumputer_model_run" 
+            x_long = requests.post(api_url_long, json=global_json_array_long, timeout=30)
+            
+            if x_long.status_code != 200:
+                db_logger.log(global_current_log_id, global_username, f"Warning: Failed to save long format to database. Status Code: {x_long.status_code}")
+            else:
+                db_logger.log(global_current_log_id, global_username, "Successfully saved long format models to APEX!")
         else:
-            db_logger.log(global_current_log_id, global_username, "Successfully saved to APEX database!")
-            db_logger.log(global_current_log_id, global_username, f"APEX Server says: {x.text}")
-
-
-        api_url_long = "https://apex.psmfc.org/akfin/data_marts/akmp/chumputer_model_run" 
-        x_long = requests.post(api_url_long, json=global_json_array_long, timeout=30)
-        
-        if x_long.status_code != 200:
-            db_logger.log(global_current_log_id, global_username, f"Warning: Failed to save long format to database. Status Code: {x_long.status_code}")
-            db_logger.log(global_current_log_id, global_username, f"APEX Error Message: {x_long.text}")
-        else:
-            db_logger.log(global_current_log_id, global_username, "Successfully saved long format models to APEX!")
+            db_logger.log(global_current_log_id, global_username, "Offline Mode: Bypassed saving run data to APEX webservices.")
 
 
         if isinstance(model_predictions, pd.DataFrame):
@@ -460,10 +439,8 @@ def handle_run():
             html_content = f"<pre>{model_predictions}</pre>"
 
         images_processed_count = len(global_index_mapping)
-        
         db_logger.log(global_current_log_id, global_username, f"Run completed successfully. Processed {images_processed_count} images.")
         
-
         db_logger.end_run(
             log_id=global_current_log_id,
             completed='Y',
@@ -480,15 +457,10 @@ def handle_run():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-
-
-
-
 @app.route('/api/history', methods=['GET'])
 def get_history():
     """Fetches history from APEX, filters by user, and aggregates into batches."""
     api_url = "https://apex.psmfc.org/akfin/data_marts/akmp/chumputer_history" 
-    
     target_user = global_username
 
     try:
@@ -501,25 +473,18 @@ def get_history():
             user_records = []
             for r in records:
                 db_user = r.get('username') or r.get('USERNAME') or r.get('Username')
-                
                 if db_user and db_user.strip() == target_user:
                     user_records.append(r)
             
-
             total_historical_records = len(user_records)
             global_approval_count = sum(1 for r in user_records if r.get('segmentation_approved') == 'Y')
-
             global_approval_rate = (global_approval_count / total_historical_records) * 100 if total_historical_records > 0 else 0
 
-            total_historical_records = len(user_records)
-
-            
             batches = defaultdict(list)
             for record in user_records:
                 batch_time = record.get('date_ran') 
                 if batch_time:
                     batches[batch_time].append(record)
-
 
             active_model_names = []
             try:
@@ -530,7 +495,6 @@ def get_history():
                     active_model_names = [m.get('model_name') for m in models_data if 'model_name' in m]
             except Exception as e:
                 print(f"Warning: Could not fetch active models for stats: {e}")
-
         
             global_stats = {
                 "total_historical_records": total_historical_records,
@@ -553,7 +517,6 @@ def get_history():
                 })
             
             summary_data.sort(key=lambda x: x['batch_timestamp'], reverse=True)
-
             return jsonify({"status": "success", "batches": summary_data, "global_stats": global_stats})
             
         else:
@@ -565,33 +528,43 @@ def get_history():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-
-
 @app.route('/api/models', methods=['GET'])
 def get_models():
+    global global_scratch_dir, model_path_dict, global_offline_mode
 
 
-    global global_scratch_dir, model_path_dict
+    if global_offline_mode:
+
+        offline_model_dict = {
+            "ConvNeXt": "/opt/chumputer",
+            "effnetv2l": "/opt/chumputer",
+            "NASNetLarge": "/opt/chumputer"
+        }
+        
+        model_names = []
+        for name, base_folder in offline_model_dict.items():
+            model_names.append(name)
+            model_path_dict[name] = base_folder
+            
+        return jsonify({"status": "success", "models": model_names})
 
 
-    "Fetches available models from the database"
     api_url = "https://apex.psmfc.org/akfin/data_marts/akmp/chumputer_models"
-
     try:
         response = requests.get(api_url, timeout=30)
         if response.status_code == 200:
             data = response.json()
-            
             models = data.get('models', []) 
-            
             model_names = []
             
             for model in models:
                 model_name = model.get('model_name') or model.get('MODEL_NAME')
-                base_folder = model.get('base_folder_path') or model.get('BASE_FOLDER_PATH') #or "/opt/chumputer"         
+                base_folder = model.get('base_folder_path') or model.get('BASE_FOLDER_PATH')
+                
                 if model_name:
                     model_names.append(model_name)
                     model_path_dict[model_name] = base_folder
+                    
             return jsonify({"status": "success", "models": model_names})
         else:
             print(f"APEX Error: {response.status_code}")
@@ -602,22 +575,19 @@ def get_models():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-
-
 @app.route('/api/users', methods=['GET'])
 def get_users():
     """Fetches available users from the database for the frontend."""
+    global global_offline_mode
+    
+    if global_offline_mode:
+        return jsonify({"status": "success", "users": [{"username": "Offline_Local_User", "organization": "Local", "email": "offline@local"}]})
+
     users_list = fetch_users_from_apex()
-
     raw_iap_email = request.headers.get('X-Goog-Authenticated-User-Email')
-
-    if not raw_iap_email and app.debug:
-        raw_iap_email = 'accounts.google.com:local_test_user@gmail.com'
-
 
     if not raw_iap_email:
         return jsonify({"status": "error", "message": "User email not found in request headers."}), 400
-
 
     cleaned_email = raw_iap_email.replace('accounts.google.com:', '').strip().lower()    
 
@@ -625,7 +595,6 @@ def get_users():
         user for user in users_list 
         if user.get('email') and user.get('email').lower() == cleaned_email
     ]
-
 
     if not matching_users:    
         return jsonify({"status": "error", "message": "User not found."}), 404
@@ -636,8 +605,17 @@ def get_users():
         return jsonify({"status": "error", "message": "Failed to fetch users from APEX"}), 500
 
 
-
-
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
-    
+
+
+
+
+
+
+
+
+
+
+
+

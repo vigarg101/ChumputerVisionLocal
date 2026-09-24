@@ -1,0 +1,388 @@
+{% extends "base.html" %}
+
+{% block title %}Pipeline Dashboard | Visual AI{% endblock %}
+
+{% block content %}
+    <section class="input-section">
+            
+        <h2>1. Fetch & View Image Grid</h2>
+        
+        <div class="form-group">
+            <label for="imageUploads">Select Local Images to Upload:</label>
+            <input type="file" id="imageUploads" name="images" multiple accept=".tif,.tiff,.jpg,.jpeg,.png" class="image-upload-input">                
+        </div>
+        
+        <button id="fetchBtn" class="main-action" onclick="fetchAndBuildGrid()">Upload and Approve Images</button>
+        
+        <div id="status-message" style="margin-top: 15px; font-weight: bold; color: var(--blue-accent);"></div>
+
+        <div id="image-grid" class="image-grid"></div>
+
+        <div id="pagination-controls" class="pagination-controls">
+            <button id="prevPageBtn" class="main-action" onclick="changePage(-1)" style="width: 120px;">&#10094; Prev Page</button>
+            <span id="page-indicator" style="font-weight: bold; color: var(--blue-medium);">Page 1 of X</span>
+            <button id="nextPageBtn" class="main-action" onclick="changePage(1)" style="width: 120px;">Next Page &#10095;</button>
+        </div>
+
+        <div id="preview-panel" class="preview-panel" style="display: none;">
+            <div style="text-align: center; margin-bottom: 15px;">
+                <h3 style="color: var(--text-light); margin-bottom: 5px;">Image Comparison Review</h3>
+
+                <p id="preview-path" style="font-family: monospace; color: var(--blue-light); font-size: 0.9rem;"></p>
+
+                <button id="flagBtn" class="btn-danger" style="margin-top: 10px; width: 150px; padding: 6px 12px; font-size: 0.9rem;" onclick="toggleFlag()">
+                    Flag Image
+                </button>
+            </div>
+            
+            <div class="preview-content">
+                <div class="preview-box">
+                    <h4 style="color: var(--accent-cyan); margin-bottom: 10px;">Masked Image</h4>
+                    <img id="preview-mask" src="" alt="Masked">
+                </div>
+                <div class="preview-box">
+                    <h4 style="color: var(--text-muted); margin-bottom: 10px;">Original Image</h4>
+                    <img id="preview-orig" src="" alt="Original">
+                </div>
+            </div>
+        </div>
+
+        <div id="post-approval-step" class="approval-complete-box">
+            <h2 style="color: #7998ee; margin-bottom: 10px;">Next Steps After Approval:</h2>
+            <p style="color: var(--text-light); margin-bottom: 20px;">Once the dataset has been verified, it is ready for CNN processing.</p>
+            <button onclick="submitApprovedImages()" class="btn-success" style="margin: 0 auto;">Select Models to Run</button>
+        </div>
+
+        <div id="status-container" style="display: none;">
+            <div class="progress-wrapper">
+                <div class="progress-text">Uploading local files to the server... This may take a moment depending on file size.</div>
+                <div class="progress-bar-track">
+                    <div class="progress-bar-fill"></div>
+                </div>
+            </div>
+        </div>
+
+    </section>
+{% endblock %}
+
+{% block scripts %}
+    <script>
+        let all_images = []; 
+        const images_per_page = 40;
+        let currentPage = 1;
+        let currentPath = null;
+
+
+        function checkFileSize(fileList, maxMbSize) {
+            const MAX_BYTES = maxMbSize * 1024 * 1024; 
+            
+            let batches = [];
+            let currentBatch = [];
+            let currentBatchSize = 0;
+
+            for (let i = 0; i < fileList.length; i++) {
+                let file = fileList[i];
+                
+                if ((currentBatchSize + file.size) > MAX_BYTES && currentBatch.length > 0) {
+                    batches.push(currentBatch);
+                    currentBatch = [];
+                    currentBatchSize = 0;
+                }
+                
+                currentBatch.push(file);
+                currentBatchSize += file.size;
+            }
+
+
+            if (currentBatch.length > 0) {
+                batches.push(currentBatch);
+            }
+
+            return batches;
+        }
+
+        async function fetchAndBuildGrid() {
+            const fileInput = document.getElementById('imageUploads');
+            const statusMsg = document.getElementById('status-message');
+            const fetchBtn = document.getElementById('fetchBtn');
+            
+
+            if (fileInput.files.length === 0) {
+                alert("Please select at least one image to upload.");
+                return;
+            }
+
+            const start = Date.now();
+
+            /*statusMsg.innerText = 'Uploading local files to the server... This may take a moment depending on file size.';
+            statusMsg.style.color = "var(--blue-accent)";*/
+
+
+            document.getElementById('status-container').style.display = 'block';
+            document.querySelector('.progress-text').innerText = 'Compressing images locally...';
+            fetchBtn.disabled = true;
+            fetchBtn.style.display = 'none';
+
+
+
+            try {
+                const options = {
+                    maxSizeMB: 1.5,
+                    maxWidthOrHeight: 2048,
+                    useWebWorker: true
+                };
+    
+                const filesArray = Array.from(fileInput.files);
+                
+                const compressionPromises = filesArray.map(async (file) => {
+                    if (file.type.includes('tiff') || file.name.toLowerCase().match(/\.tiff?$/)) {
+                        return file;
+                    } else {
+                        try {
+                            const compressedBlob = await imageCompression(file, options);
+                            return new File([compressedBlob], file.name, { 
+                                type: file.type,
+                                lastModified: Date.now()
+                            });
+                        } catch (error) {
+                            console.error(`Error compressing ${file.name}:`, error);
+                            return file; 
+                        }
+                    }
+                });
+
+                const processedFiles = await Promise.all(compressionPromises);
+
+
+                /*const processedFiles = [];
+                const filesArray = Array.from(fileInput.files);*/
+
+
+                /*
+                for (let i = 0; i < filesArray.length; i++) {
+                    const file = filesArray[i];
+
+                    if (file.type.includes('tiff') || file.name.toLowerCase().match(/\.tiff?$/)) {
+                        processedFiles.push(file);
+                    } else {
+                        try {
+                            const compressedBlob = await imageCompression(file, options);
+
+                            const compressedFile = new File([compressedBlob], file.name, { 
+                                type: file.type ,
+                                lastModified: Date.now()
+                            });
+
+                            processedFiles.push(compressedFile);
+                        } catch (error) {
+                            console.error(`Error compressing ${file.name}:`, error);
+                            processedFiles.push(file);
+                        }
+                    }
+
+                    
+                } */
+
+
+            
+
+                document.querySelector('.progress-text').innerText = `Uploading files to server... This may take a moment depending on file size.`;
+                const batches = checkFileSize(processedFiles, 32);
+    
+
+            /*try {*/
+
+            
+
+                for (let i=0; i < batches.length; i++) {
+                    const batch = batches[i];
+                    const batchFormData = new FormData();
+
+                    const isLastBatch = (i === batches.length - 1);
+
+                    for (let j = 0; j < batch.length; j++) {
+                        batchFormData.append('images', batch[j], batch[j].name);
+                    }
+
+                    batchFormData.append('batch_index', i);
+                    batchFormData.append('is_last_batch', isLastBatch);
+
+                    batchFormData.append('start_time', start);
+
+                    document.querySelector('.progress-text').innerText = 
+                        `Uploading batch ${i + 1} of ${batches.length}...`;
+
+                    const response = await fetch('/api/approve', {
+                        method: 'POST',
+                        body: batchFormData
+                    });
+
+                    const data = await response.json();
+
+                    if (data.status !== 'success') {
+                        statusMsg.innerText = `Error: ${data.message}`;
+                        statusMsg.style.color = "#c94c4c";
+                        return;
+                    }
+
+                    if (isLastBatch) {
+                
+                        document.getElementById('status-container').style.display = 'none';
+                        all_images = data.results; 
+                        currentPage = 1; 
+                        
+                        document.getElementById('post-approval-step').style.display = 'block';
+
+                        if (!Array.isArray(all_images) || all_images.length === 0) {
+                            document.getElementById('image-grid').innerHTML = '<p>No images found.</p>';
+                            document.getElementById('pagination-controls').style.display = 'none';
+                            return;
+                        } else {
+                            document.getElementById('pagination-controls').style.display = 'flex';
+                            renderCurrentPage(); 
+                        }
+
+                    }
+                }
+                 
+            } catch (error) {
+                console.error("Upload Error:", error);
+                statusMsg.innerText = "Network Error: Could not upload files to the server.";
+                statusMsg.style.color = "#c94c4c";
+            } finally {
+                fetchBtn.disabled = false;
+            }
+
+        }
+        
+        
+
+        function renderCurrentPage() {
+            const startIndex = (currentPage - 1) * images_per_page;
+            const endIndex = startIndex + images_per_page;
+            const pageImages = all_images.slice(startIndex, endIndex);
+            renderGrid2(pageImages);
+
+            const totalPages = Math.ceil(all_images.length / images_per_page);
+            document.getElementById('page-indicator').innerText = `Page ${currentPage} of ${totalPages}`;
+            
+            const prevBtn = document.getElementById('prevPageBtn');
+            const nextBtn = document.getElementById('nextPageBtn');
+
+            prevBtn.disabled = (currentPage === 1);
+            nextBtn.disabled = (currentPage === totalPages);
+
+            prevBtn.style.visibility = (currentPage === 1) ? 'hidden' : 'visible';
+            nextBtn.style.visibility = (currentPage === totalPages) ? 'hidden' : 'visible';
+
+            
+        }
+
+        function changePage(direction) {
+            const totalPages = Math.ceil(all_images.length / images_per_page);
+            currentPage += direction;
+            if (currentPage < 1) currentPage = 1;
+            if (currentPage > totalPages) currentPage = totalPages;
+            renderCurrentPage();
+        }
+
+        
+
+        function renderGrid2(images) {
+            const grid = document.getElementById('image-grid');
+            grid.innerHTML = ''; 
+
+            if (!Array.isArray(images) || images.length === 0) {
+                grid.innerHTML = '<p>No images found in this directory.</p>';
+                return;
+            }
+
+            images.forEach(item => {
+                const card = document.createElement('div');
+                card.className = 'grid-card';
+
+                if (item.flagged) {
+                    card.classList.add('flagged-card');
+                }
+
+                const imgOrig = document.createElement('img');
+                imgOrig.src = `/api/image?path=${encodeURIComponent(item.masked_filepath)}`; 
+                
+                card.appendChild(imgOrig);
+
+                card.addEventListener('click', () => {
+                    document.getElementById('preview-panel').style.display = 'block';
+                    document.getElementById('preview-mask').src = `/api/image?path=${encodeURIComponent(item.masked_filepath)}`;
+                    document.getElementById('preview-orig').src = `/api/image?path=${encodeURIComponent(item.filepath)}`;
+                    document.getElementById('preview-path').innerText = item.filepath;
+
+                    currentPath = item.filepath;
+                    updateFlagButtonUI(item.flagged);
+                });
+                
+                grid.appendChild(card);
+            });
+        }
+
+        function toggleFlag() {
+            if (!currentPath) return;
+
+            const imgObj = all_images.find(img => img.filepath === currentPath);
+            
+            if (imgObj) {
+                imgObj.flagged = !imgObj.flagged; 
+                renderCurrentPage();
+                updateFlagButtonUI(imgObj.flagged);
+            }
+        }
+
+        function updateFlagButtonUI(isFlagged) {
+            const flagBtn = document.getElementById('flagBtn');
+            if (isFlagged) {
+                flagBtn.innerText = "Unflag Image";
+                flagBtn.style.backgroundColor = "#c94c4c"; 
+                flagBtn.style.color = "white";
+            } else {
+                flagBtn.innerText = "Flag Image";
+                flagBtn.style.backgroundColor = "transparent"; 
+                flagBtn.style.color = "#c94c4c";
+            }
+        }
+
+        async function submitApprovedImages() {
+            const approvedPaths = all_images
+                .filter(img => !img.flagged)
+                .map(img => img.filepath);
+
+            if (approvedPaths.length === 0) {
+                alert("No images approved! Please unflag at least one image to proceed.");
+                return;
+            }
+
+            const statusMsg = document.getElementById('status-message');
+            statusMsg.innerText = "Saving approved dataset... redirecting.";
+            statusMsg.style.color = "var(--text-light)";
+
+            try {
+                const response = await fetch('/api/save_approved', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ approved_paths: approvedPaths })
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    window.location.href = "{{ url_for('model_run') }}";
+                } else {
+                    statusMsg.innerText = `Error: ${data.message}`;
+                    statusMsg.style.color = "#c94c4c";
+                }
+            } catch (error) {
+                console.error("Submission Error:", error);
+                statusMsg.innerText = "Network Error, Could not save approvals.";
+                statusMsg.style.color = "#c94c4c";
+            }
+        }
+    </script>
+{% endblock %}
