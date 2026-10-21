@@ -30,9 +30,11 @@ global_index_mapping = []
 global_username = "VGarg_Test"
 global_index_run = 0
 
+global_gcp_path = None
+
+
 model_path_dict = {}
 
-# These will be for long format models
 global_json_array_long = []
 global_index_mapping_long = [] 
 
@@ -40,8 +42,67 @@ global_approval_rate = 0.0
 
 global_run_start_time = None
 
-# NEW: Offline mode flag
 global_offline_mode = False
+
+
+
+'''GCP MOUNT PATH SETUP AND HELPERS'''
+
+
+
+
+DEFAULT_LOCAL_BUCKET = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mock_bucket")
+BUCKET_MOUNT_ROOT = os.environ.get("BUCKET_MOUNT_ROOT", "/mnt/gcs" if os.path.exists("/mnt/gcs") else DEFAULT_LOCAL_BUCKET)
+ALLOWED_EXTS = {".tif", ".tiff", ".jpg", ".jpeg", ".png"}
+
+def normalize_gcp_path(raw):
+    p = (raw or "").strip()
+    if p.startswith("gs://"):
+        rest = p[5:]
+        p = rest.split("/", 1)[1] if "/" in rest else ""   
+    return p.strip("/")
+
+def get_user_bucket_root():
+
+    gcp_path = global_gcp_path
+    if (not gcp_path or gcp_path == "Unknown") and "mock_bucket" in BUCKET_MOUNT_ROOT:
+        gcp_path = "test_user_folder"
+
+    if global_offline_mode or not gcp_path or gcp_path == "Unknown":
+        return None
+        
+    mount = os.path.realpath(BUCKET_MOUNT_ROOT)
+    root = os.path.realpath(os.path.join(mount, normalize_gcp_path(gcp_path)))
+    
+    if root != mount and not root.startswith(mount + os.sep):
+        return None
+        
+    if not os.path.isdir(root) and "mock_bucket" in BUCKET_MOUNT_ROOT:
+        os.makedirs(root, exist_ok=True)
+        
+    return root if os.path.isdir(root) else None
+
+def resolve_bucket_path(rel_path):
+    root = get_user_bucket_root()
+    if root is None:
+        raise ValueError("No bucket available for this user")
+    full = os.path.realpath(os.path.join(root, rel_path.lstrip("/")))
+    if full != root and not full.startswith(root + os.sep):
+        raise ValueError("Path outside user folder")
+    return full
+
+
+
+'''END GCP MOUNT PATH SETUP AND HELPERS'''
+
+
+
+
+
+
+
+
+
 
 
 def fetch_users_from_apex():
@@ -54,10 +115,12 @@ def fetch_users_from_apex():
             
             for user in users:
                 username = user.get('username') or user.get('USERNAME')
-                organization = user.get('organization') or user.get('ORGANIZATION') 
+                organization = user.get('organization_name') or user.get('ORGANIZATION_NAME') 
                 email = user.get('email') or user.get('EMAIL') 
+                gcp_path = user.get('gcp_path') or user.get('GCP_PATH')
+
                 if username:
-                    frontend_users.append({"username": username, "organization": organization, "email": email})
+                    frontend_users.append({"username": username, "organization": organization, "email": email, "gcp_path": gcp_path})
             return frontend_users
         else:
             print(f"APEX Error fetching users: {response.status_code}")
@@ -121,7 +184,7 @@ def check_file_size(file_list, max_size):
 
 @app.before_request
 def enforce_mode_routing():
-    global global_offline_mode, global_username, global_organization
+    global global_offline_mode, global_username, global_organization, global_gcp_path
     
     if request.endpoint == 'static':
         return
@@ -133,7 +196,7 @@ def enforce_mode_routing():
         global_offline_mode = True
         global_username = "Offline_Local_User"
         global_organization = "Local"
-        
+        global_gcp_path = "Unknown"
         offline_allowed_endpoints = [
             'upload_approve', 
             'model_run', 
@@ -152,7 +215,7 @@ def enforce_mode_routing():
 
 @app.route('/upload_approve')
 def upload_approve():
-    return render_template('upload_approve2.html')
+    return render_template('upload_approve3.html')
 
 
 @app.route('/model_run')
@@ -164,6 +227,7 @@ def model_run():
 def history_page():
     global global_username
     global global_organization 
+    global global_gcp_path
     
     if request.method == 'POST':
         selected_user = request.form.get('username')
@@ -177,16 +241,18 @@ def history_page():
             for user in all_users:
                 if user['username'] == selected_user:
                     global_organization = user['organization'] or "Unknown"
+                    global_gcp_path = user['gcp_path'] or "Unknown"
+                    
                     break
                     
             print(f"Session updated. User proceeding as: {global_username} ({global_organization})")
 
-    return render_template('history2.html', global_username=global_username, global_organization=global_organization)
+    return render_template('history2.html', global_username=global_username, global_organization=global_organization, global_gcp_path=global_gcp_path)
 
 
 @app.route('/')
 def login():
-    return render_template('login.html', global_username=global_username)
+    return render_template('login.html', global_username=global_username, global_gcp_path=global_gcp_path)
 
 
 @app.route('/api/image')
@@ -200,6 +266,25 @@ def serve_image():
     return send_file(image_path)
 
 
+
+
+@app.route('/api/list_bucket_files', methods=['GET'])
+def list_bucket_files():
+    root = get_user_bucket_root()
+    if not root:
+        return jsonify({"status": "error", "message": "GCS bucket mount not available."}), 400
+    files_list = []
+    for dirpath, _, filenames in os.walk(root):
+        for f in filenames:
+            if Path(f).suffix.lower() in ALLOWED_EXTS:
+                full_path = os.path.join(dirpath, f)
+                files_list.append(os.path.relpath(full_path, root))
+    return jsonify({"status": "success", "files": files_list})
+
+
+
+
+
 @app.route('/api/approve', methods=['POST'])
 def handle_approval():
 
@@ -207,57 +292,88 @@ def handle_approval():
     global global_index_mapping, global_json_array, global_username, global_json_array_long
     global global_current_log_id, global_organization, global_index_run
 
-    is_last_batch = request.form.get('is_last_batch', 'false').lower() == 'true'
-    batch_index = request.form.get('batch_index', None)
 
-    if batch_index is not None:
-        try:
-            batch_index = int(batch_index)
-            print(f"Processing batch index: {batch_index}, Is last batch: {is_last_batch}")
-        except ValueError:
-            return jsonify({"status": "error", "message": "Invalid batch index."}), 400
 
-    if batch_index == 0:    
-        global_current_log_id = db_logger.start_run(
-            username=global_username, 
-            org=global_organization
-        )
+    if request.is_json and 'selected_paths' in request.json:
 
-        db_logger.log(global_current_log_id, global_username, f"Initializing new run session for {global_organization} (Offline: {global_offline_mode})...")
+        selected_rel_paths = request.json.get('selected_paths', [])
+        if not selected_rel_paths:
+            return jsonify({"status": "error", "message": "No bucket files selected."}), 400
+
+        global_current_log_id = db_logger.start_run(username=global_username, org=global_organization)
+        db_logger.log(global_current_log_id, global_username, "Initializing run from GCS bucket files...")
 
         global_index_mapping.clear()
-        global_json_array.clear()  
-        global_json_array_long.clear()      
-        global_index_mapping_long.clear() 
+        global_json_array.clear()
+        global_json_array_long.clear()
+        global_index_mapping_long.clear()
 
         if global_scratch_dir and os.path.exists(global_scratch_dir):
+            shutil.rmtree(global_scratch_dir, ignore_errors=True)
+        global_scratch_dir = tempfile.mkdtemp(prefix="chumputer_gcs_")
+
+        for rel_path in selected_rel_paths:
             try:
-                shutil.rmtree(global_scratch_dir)
-                print(f"Cleaned up old scratch directory: {global_scratch_dir}")
+                src_path = resolve_bucket_path(rel_path)
+                if os.path.exists(src_path):
+                    shutil.copy2(src_path, os.path.join(global_scratch_dir, os.path.basename(src_path)))
             except Exception as e:
-                print(f"Warning: Failed to clean up old scratch directory: {e}")
+                print(f"Error copying {rel_path}: {e}")
 
-        global_scratch_dir = tempfile.mkdtemp(prefix="chumputer_batch_")
-        db_logger.log(global_current_log_id, global_username, f"Created temporary remote upload directory: {global_scratch_dir}")
+        db_logger.log(global_current_log_id, global_username, f"Copied {len(selected_rel_paths)} files from mounted bucket to scratch.")
 
-    if 'images' not in request.files:
-        return jsonify({"status": "error", "message": "No files were sent in the request."}), 400
+    else:
+        is_last_batch = request.form.get('is_last_batch', 'false').lower() == 'true'
+        batch_index = request.form.get('batch_index', None)
 
-    files = request.files.getlist('images')
-    if not files or files[0].filename == '':
-        return jsonify({"status": "error", "message": "No valid files were sent in the request."}), 400
+        if batch_index is not None:
+            try:
+                batch_index = int(batch_index)
+                print(f"Processing batch index: {batch_index}, Is last batch: {is_last_batch}")
+            except ValueError:
+                return jsonify({"status": "error", "message": "Invalid batch index."}), 400
 
-    for file in files:
-        if file.filename != '':
-            filename = secure_filename(file.filename) 
-            save_path = os.path.join(global_scratch_dir, filename)
-            file.save(save_path)
+        if batch_index == 0:    
+            global_current_log_id = db_logger.start_run(
+                username=global_username, 
+                org=global_organization
+            )
 
-    db_logger.log(global_current_log_id, global_username, f"Saved {len(files)} files from Batch {batch_index + 1}")
+            db_logger.log(global_current_log_id, global_username, f"Initializing new run session for {global_organization} (Offline: {global_offline_mode})...")
 
-    if not is_last_batch:
-        db_logger.log(global_current_log_id, global_username, f"Batch {batch_index + 1} uploaded successfully.")
-        return jsonify({"status": "success", "message": f"Batch {batch_index + 1} uploaded successfully."}) 
+            global_index_mapping.clear()
+            global_json_array.clear()  
+            global_json_array_long.clear()      
+            global_index_mapping_long.clear() 
+
+            if global_scratch_dir and os.path.exists(global_scratch_dir):
+                try:
+                    shutil.rmtree(global_scratch_dir)
+                    print(f"Cleaned up old scratch directory: {global_scratch_dir}")
+                except Exception as e:
+                    print(f"Warning: Failed to clean up old scratch directory: {e}")
+
+            global_scratch_dir = tempfile.mkdtemp(prefix="chumputer_batch_")
+            db_logger.log(global_current_log_id, global_username, f"Created temporary remote upload directory: {global_scratch_dir}")
+
+        if 'images' not in request.files:
+            return jsonify({"status": "error", "message": "No files were sent in the request."}), 400
+
+        files = request.files.getlist('images')
+        if not files or files[0].filename == '':
+            return jsonify({"status": "error", "message": "No valid files were sent in the request."}), 400
+
+        for file in files:
+            if file.filename != '':
+                filename = secure_filename(file.filename) 
+                save_path = os.path.join(global_scratch_dir, filename)
+                file.save(save_path)
+
+        db_logger.log(global_current_log_id, global_username, f"Saved {len(files)} files from Batch {batch_index + 1}")
+
+        if not is_last_batch:
+            db_logger.log(global_current_log_id, global_username, f"Batch {batch_index + 1} uploaded successfully.")
+            return jsonify({"status": "success", "message": f"Batch {batch_index + 1} uploaded successfully."}) 
 
     try:
         saved_files = os.listdir(global_scratch_dir)

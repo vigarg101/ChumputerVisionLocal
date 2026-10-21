@@ -1,0 +1,449 @@
+{% extends "base.html" %}
+
+{% block title %}Pipeline Dashboard | Visual AI{% endblock %}
+
+{% block content %}
+    <section class="input-section">
+        <h2>Fetch & View Image Grid</h2>
+        
+        <!-- Input Source Selector Toggle -->
+        <div class="form-group" style="margin-bottom: 20px;">
+            <label style="font-weight: bold; color: var(--blue-medium);">Select Input Source:</label>
+            <div style="display: flex; gap: 20px; margin-top: 8px;">
+                <label style="cursor: pointer;"><input type="radio" name="sourceType" value="local" checked onclick="switchSource('local')"> Local File Upload</label>
+                <label style="cursor: pointer;"><input type="radio" name="sourceType" value="gcs" onclick="switchSource('gcs')"> GCP Bucket Folder</label>
+            </div>
+        </div>
+
+        <!-- Local Upload Section -->
+        <div id="local-source-container">
+            <div class="form-group">
+                <label for="imageUploads">Select Local Images to Upload:</label>
+                <input type="file" id="imageUploads" name="images" multiple accept=".tif,.tiff,.jpg,.jpeg,.png" class="image-upload-input">                
+            </div>
+            
+            <button id="fetchBtn" class="main-action" onclick="fetchAndBuildGrid()">Upload and Approve Images</button>
+        </div>
+
+        <!-- GCP Bucket Selection Section (Hidden by default) -->
+        <div id="gcs-source-container" style="display: none;">
+            <button id="loadGcsBtn" class="main-action" onclick="loadGcsFiles()">Load File List from GCP Bucket</button>
+            
+            <div id="gcs-file-picker" style="display: none; margin-top: 15px; max-height: 250px; overflow-y: auto; border: 1px solid var(--blue-medium); padding: 15px; border-radius: 6px; background: rgba(0,0,0,0.1);">
+                <div style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-weight: bold; color: var(--text-light);">Select specific files to process:</span>
+                    <div>
+                        <button type="button" onclick="selectAllGcs(true)" style="font-size: 0.8rem; padding: 4px 8px; margin-right: 5px;">Select All</button>
+                        <button type="button" onclick="selectAllGcs(false)" style="font-size: 0.8rem; padding: 4px 8px;">Deselect All</button>
+                    </div>
+                </div>
+                <div id="gcs-checkbox-list"></div>
+            </div>
+
+            <button id="processGcsBtn" class="main-action" style="display: none; margin-top: 15px;" onclick="processGcsFiles()">Process Selected Bucket Files</button>
+        </div>
+        
+        <div id="status-message" style="margin-top: 15px; font-weight: bold; color: var(--blue-accent);"></div>
+
+        <div id="image-grid" class="image-grid"></div>
+
+        <div id="pagination-controls" class="pagination-controls" style="display: none;">
+            <button id="prevPageBtn" class="main-action" onclick="changePage(-1)" style="width: 120px;">&#10094; Prev Page</button>
+            <span id="page-indicator" style="font-weight: bold; color: var(--blue-medium);">Page 1 of X</span>
+            <button id="nextPageBtn" class="main-action" onclick="changePage(1)" style="width: 120px;">Next Page &#10095;</button>
+        </div>
+
+        <div id="preview-panel" class="preview-panel" style="display: none;">
+            <div style="text-align: center; margin-bottom: 15px;">
+                <h3 style="color: var(--text-light); margin-bottom: 5px;">Image Comparison Review</h3>
+
+                <p id="preview-path" style="font-family: monospace; color: var(--blue-light); font-size: 0.9rem;"></p>
+
+                <button id="flagBtn" class="btn-danger" style="margin-top: 10px; width: 150px; padding: 6px 12px; font-size: 0.9rem;" onclick="toggleFlag()">
+                    Flag Image
+                </button>
+            </div>
+            
+            <div class="preview-content">
+                <div class="preview-box">
+                    <h4 style="color: var(--accent-cyan); margin-bottom: 10px;">Masked Image</h4>
+                    <img id="preview-mask" src="" alt="Masked">
+                </div>
+                <div class="preview-box">
+                    <h4 style="color: var(--text-muted); margin-bottom: 10px;">Original Image</h4>
+                    <img id="preview-orig" src="" alt="Original">
+                </div>
+            </div>
+        </div>
+
+        <div id="post-approval-step" class="approval-complete-box" style="display: none;">
+            <h2 style="color: #7998ee; margin-bottom: 10px;">Next Steps After Approval:</h2>
+            <p style="color: var(--text-light); margin-bottom: 20px;">Once the dataset has been verified, it is ready for CNN processing.</p>
+            <button onclick="submitApprovedImages()" class="btn-success" style="margin: 0 auto;">Select Models to Run</button>
+        </div>
+
+        <div id="status-container" style="display: none;">
+            <div class="progress-wrapper">
+                <div class="progress-text">Processing files...</div>
+                <div class="progress-bar-track">
+                    <div class="progress-bar-fill"></div>
+                </div>
+            </div>
+        </div>
+
+    </section>
+{% endblock %}
+
+{% block scripts %}
+    <script>
+        let all_images = []; 
+        const images_per_page = 40;
+        let currentPage = 1;
+        let currentPath = null;
+
+        // Toggle between local file selection and GCP bucket mode
+        function switchSource(type) {
+            if (type === 'local') {
+                document.getElementById('local-source-container').style.display = 'block';
+                document.getElementById('gcs-source-container').style.display = 'none';
+            } else {
+                document.getElementById('local-source-container').style.display = 'none';
+                document.getElementById('gcs-source-container').style.display = 'block';
+            }
+        }
+
+        // Fetch file list from the mounted bucket and render checkboxes
+        async function loadGcsFiles() {
+            const statusMsg = document.getElementById('status-message');
+            statusMsg.innerText = "Loading file list from GCP bucket...";
+            statusMsg.style.color = "var(--blue-accent)";
+
+            try {
+                const response = await fetch('/api/list_bucket_files');
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    const listContainer = document.getElementById('gcs-checkbox-list');
+                    listContainer.innerHTML = '';
+
+                    if (data.files.length === 0) {
+                        listContainer.innerHTML = '<p style="color: #c94c4c;">No compatible image files found in your bucket folder.</p>';
+                        return;
+                    }
+
+                    data.files.forEach(filePath => {
+                        const div = document.createElement('div');
+                        div.style.marginBottom = '6px';
+                        div.innerHTML = `<label style="cursor: pointer; color: var(--text-light); font-size: 0.9rem;">
+                            <input type="checkbox" class="gcs-file-checkbox" value="${filePath}" checked> ${filePath}
+                        </label>`;
+                        listContainer.appendChild(div);
+                    });
+
+                    document.getElementById('gcs-file-picker').style.display = 'block';
+                    document.getElementById('processGcsBtn').style.display = 'block';
+                    statusMsg.innerText = `Loaded ${data.files.length} files from bucket. Select which ones to run.`;
+                } else {
+                    statusMsg.innerText = `Error: ${data.message}`;
+                    statusMsg.style.color = "#c94c4c";
+                }
+            } catch (err) {
+                console.error(err);
+                statusMsg.innerText = "Failed to connect to server for GCS files.";
+                statusMsg.style.color = "#c94c4c";
+            }
+        }
+
+        function selectAllGcs(select) {
+            document.querySelectorAll('.gcs-file-checkbox').forEach(cb => cb.checked = select);
+        }
+
+        // Send selected GCS file paths straight to your existing /api/approve endpoint
+        async function processGcsFiles() {
+            const checkboxes = document.querySelectorAll('.gcs-file-checkbox:checked');
+            const selectedPaths = Array.from(checkboxes).map(cb => cb.value);
+
+            if (selectedPaths.length === 0) {
+                alert("Please select at least one file from the bucket list.");
+                return;
+            }
+
+            const statusMsg = document.getElementById('status-message');
+            document.getElementById('status-container').style.display = 'block';
+            document.querySelector('.progress-text').innerText = 'Copying and processing selected bucket files...';
+            document.getElementById('processGcsBtn').disabled = true;
+
+            try {
+                const response = await fetch('/api/approve', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ selected_paths: selectedPaths })
+                });
+
+                const data = await response.json();
+                document.getElementById('status-container').style.display = 'none';
+
+                if (data.status === 'success') {
+                    all_images = data.results;
+                    currentPage = 1;
+                    document.getElementById('post-approval-step').style.display = 'block';
+
+                    if (!Array.isArray(all_images) || all_images.length === 0) {
+                        document.getElementById('image-grid').innerHTML = '<p>No images processed.</p>';
+                        document.getElementById('pagination-controls').style.display = 'none';
+                    } else {
+                        document.getElementById('pagination-controls').style.display = 'flex';
+                        renderCurrentPage();
+                    }
+                    statusMsg.innerText = "Selected bucket files processed successfully!";
+                    statusMsg.style.color = "var(--blue-accent)";
+                } else {
+                    statusMsg.innerText = `Error: ${data.message}`;
+                    statusMsg.style.color = "#c94c4c";
+                }
+            } catch (err) {
+                console.error(err);
+                document.getElementById('status-container').style.display = 'none';
+                statusMsg.innerText = "Network Error while processing GCS files.";
+                statusMsg.style.color = "#c94c4c";
+            } finally {
+                document.getElementById('processGcsBtn').disabled = false;
+            }
+        }
+
+        function checkFileSize(fileList, maxMbSize) {
+            const MAX_BYTES = maxMbSize * 1024 * 1024; 
+            let batches = [];
+            let currentBatch = [];
+            let currentBatchSize = 0;
+
+            for (let i = 0; i < fileList.length; i++) {
+                let file = fileList[i];
+                if ((currentBatchSize + file.size) > MAX_BYTES && currentBatch.length > 0) {
+                    batches.push(currentBatch);
+                    currentBatch = [];
+                    currentBatchSize = 0;
+                }
+                currentBatch.push(file);
+                currentBatchSize += file.size;
+            }
+
+            if (currentBatch.length > 0) {
+                batches.push(currentBatch);
+            }
+            return batches;
+        }
+
+        async function fetchAndBuildGrid() {
+            const fileInput = document.getElementById('imageUploads');
+            const statusMsg = document.getElementById('status-message');
+            const fetchBtn = document.getElementById('fetchBtn');
+            
+            if (fileInput.files.length === 0) {
+                alert("Please select at least one image to upload.");
+                return;
+            }
+
+
+            const MAX_BYTES = 10 * 1024 * 1024; // 10 MB in bytes
+            let totalBytes = 0;
+            
+            for (let i = 0; i < fileInput.files.length; i++) {
+                totalBytes += fileInput.files[i].size;
+            }
+
+            if (totalBytes > MAX_BYTES) {
+                const sizeMb = (totalBytes / (1024 * 1024)).toFixed(2);
+                statusMsg.innerText = `Error: Selected files exceed the 10MB limit (Total: ${sizeMb} MB). Please select fewer files.`;
+                statusMsg.style.color = "#c94c4c";
+                alert(`Selected files exceed the 10MB limit (Total: ${sizeMb} MB). Please select fewer files.`);
+                return;
+            }
+
+            const start = Date.now();
+            document.getElementById('status-container').style.display = 'block';
+            document.querySelector('.progress-text').innerText = 'Compressing images locally...';
+            fetchBtn.disabled = true;
+            fetchBtn.style.display = 'none';
+
+            try {
+                const options = { maxSizeMB: 1.5, maxWidthOrHeight: 2048, useWebWorker: true };
+                const filesArray = Array.from(fileInput.files);
+                
+                const compressionPromises = filesArray.map(async (file) => {
+                    if (file.type.includes('tiff') || file.name.toLowerCase().match(/\.tiff?$/)) {
+                        return file;
+                    } else {
+                        try {
+                            const compressedBlob = await imageCompression(file, options);
+                            return new File([compressedBlob], file.name, { type: file.type, lastModified: Date.now() });
+                        } catch (error) {
+                            return file; 
+                        }
+                    }
+                });
+
+                const processedFiles = await Promise.all(compressionPromises);
+                document.querySelector('.progress-text').innerText = `Uploading files to server...`;
+                const batches = checkFileSize(processedFiles, 32);
+
+                for (let i=0; i < batches.length; i++) {
+                    const batch = batches[i];
+                    const batchFormData = new FormData();
+                    const isLastBatch = (i === batches.length - 1);
+
+                    for (let j = 0; j < batch.length; j++) {
+                        batchFormData.append('images', batch[j], batch[j].name);
+                    }
+
+                    batchFormData.append('batch_index', i);
+                    batchFormData.append('is_last_batch', isLastBatch);
+                    batchFormData.append('start_time', start);
+
+                    const response = await fetch('/api/approve', { method: 'POST', body: batchFormData });
+                    const data = await response.json();
+
+                    if (data.status !== 'success') {
+                        statusMsg.innerText = `Error: ${data.message}`;
+                        statusMsg.style.color = "#c94c4c";
+                        return;
+                    }
+
+                    if (isLastBatch) {
+                        document.getElementById('status-container').style.display = 'none';
+                        all_images = data.results; 
+                        currentPage = 1; 
+                        document.getElementById('post-approval-step').style.display = 'block';
+
+                        if (!Array.isArray(all_images) || all_images.length === 0) {
+                            document.getElementById('image-grid').innerHTML = '<p>No images found.</p>';
+                            document.getElementById('pagination-controls').style.display = 'none';
+                            return;
+                        } else {
+                            document.getElementById('pagination-controls').style.display = 'flex';
+                            renderCurrentPage(); 
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error("Upload Error:", error);
+                statusMsg.innerText = "Network Error: Could not upload files to the server.";
+                statusMsg.style.color = "#c94c4c";
+            } finally {
+                fetchBtn.disabled = false;
+            }
+        }
+        
+        function renderCurrentPage() {
+            const startIndex = (currentPage - 1) * images_per_page;
+            const endIndex = startIndex + images_per_page;
+            const pageImages = all_images.slice(startIndex, endIndex);
+            renderGrid2(pageImages);
+
+            const totalPages = Math.ceil(all_images.length / images_per_page);
+            document.getElementById('page-indicator').innerText = `Page ${currentPage} of ${totalPages}`;
+            
+            const prevBtn = document.getElementById('prevPageBtn');
+            const nextBtn = document.getElementById('nextPageBtn');
+
+            prevBtn.disabled = (currentPage === 1);
+            nextBtn.disabled = (currentPage === totalPages);
+            prevBtn.style.visibility = (currentPage === 1) ? 'hidden' : 'visible';
+            nextBtn.style.visibility = (currentPage === totalPages) ? 'hidden' : 'visible';
+        }
+
+        function changePage(direction) {
+            const totalPages = Math.ceil(all_images.length / images_per_page);
+            currentPage += direction;
+            if (currentPage < 1) currentPage = 1;
+            if (currentPage > totalPages) currentPage = totalPages;
+            renderCurrentPage();
+        }
+
+        function renderGrid2(images) {
+            const grid = document.getElementById('image-grid');
+            grid.innerHTML = ''; 
+
+            if (!Array.isArray(images) || images.length === 0) {
+                grid.innerHTML = '<p>No images found.</p>';
+                return;
+            }
+
+            images.forEach(item => {
+                const card = document.createElement('div');
+                card.className = 'grid-card';
+                if (item.flagged) card.classList.add('flagged-card');
+
+                const imgOrig = document.createElement('img');
+                imgOrig.src = `/api/image?path=${encodeURIComponent(item.masked_filepath)}`; 
+                card.appendChild(imgOrig);
+
+                card.addEventListener('click', () => {
+                    document.getElementById('preview-panel').style.display = 'block';
+                    document.getElementById('preview-mask').src = `/api/image?path=${encodeURIComponent(item.masked_filepath)}`;
+                    document.getElementById('preview-orig').src = `/api/image?path=${encodeURIComponent(item.filepath)}`;
+                    document.getElementById('preview-path').innerText = item.filepath;
+                    currentPath = item.filepath;
+                    updateFlagButtonUI(item.flagged);
+                });
+                grid.appendChild(card);
+            });
+        }
+
+        function toggleFlag() {
+            if (!currentPath) return;
+            const imgObj = all_images.find(img => img.filepath === currentPath);
+            if (imgObj) {
+                imgObj.flagged = !imgObj.flagged; 
+                renderCurrentPage();
+                updateFlagButtonUI(imgObj.flagged);
+            }
+        }
+
+        function updateFlagButtonUI(isFlagged) {
+            const flagBtn = document.getElementById('flagBtn');
+            if (isFlagged) {
+                flagBtn.innerText = "Unflag Image";
+                flagBtn.style.backgroundColor = "#c94c4c"; 
+                flagBtn.style.color = "white";
+            } else {
+                flagBtn.innerText = "Flag Image";
+                flagBtn.style.backgroundColor = "transparent"; 
+                flagBtn.style.color = "#c94c4c";
+            }
+        }
+
+        async function submitApprovedImages() {
+            const approvedPaths = all_images.filter(img => !img.flagged).map(img => img.filepath);
+            if (approvedPaths.length === 0) {
+                alert("No images approved! Please unflag at least one image to proceed.");
+                return;
+            }
+
+            const statusMsg = document.getElementById('status-message');
+            statusMsg.innerText = "Saving approved dataset... redirecting.";
+            statusMsg.style.color = "var(--text-light)";
+
+            try {
+                const response = await fetch('/api/save_approved', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ approved_paths: approvedPaths })
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    window.location.href = "{{ url_for('model_run') }}";
+                } else {
+                    statusMsg.innerText = `Error: ${data.message}`;
+                    statusMsg.style.color = "#c94c4c";
+                }
+            } catch (error) {
+                console.error("Submission Error:", error);
+                statusMsg.innerText = "Network Error, Could not save approvals.";
+                statusMsg.style.color = "#c94c4c";
+            }
+        }
+    </script>
+{% endblock %}
